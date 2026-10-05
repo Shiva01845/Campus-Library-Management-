@@ -87,8 +87,11 @@ function App(){
     return ()=>{cancelled=true};
   },[session]);
 
+  const isPasswordResetRoute = window.location.pathname === '/reset-password';
   if(!supabase) return <ConfigMissing/>;
   if(loading) return <Splash/>;
+  // A recovery session is intentionally kept outside the normal profile/role flow.
+  if(isPasswordResetRoute) return <ResetPassword session={session}/>;
   if(!session) return <Login/>;
   if(!profile) return <ProfilePending email={session.user.email || ''} onLogout={()=>supabase.auth.signOut()}/>;
   if(!profile.is_active) return <ProfilePending email={profile.email} inactive onLogout={()=>supabase.auth.signOut()}/>;
@@ -125,8 +128,34 @@ function ConfigMissing(){return <div className="loginPage"><div className="login
 function Splash(){return <div className="loginPage"><div className="loginPanel"><div className="loginCard"><div style={{marginBottom: "20px"}}><KgrLogo variant="compact" /></div><h2>Connecting to library...</h2><p>Checking your secure session.</p></div></div></div>}
 function ProfilePending({email,onLogout,inactive=false}:{email:string;onLogout:()=>void;inactive?:boolean}){return <div className="loginPage"><div className="loginPanel"><div className="loginCard"><div style={{marginBottom: "20px"}}><KgrLogo variant="compact" /></div><h2>{inactive?'Account inactive':'Profile not ready'}</h2><p>{inactive?'Your library account has been deactivated. Contact the librarian.':`Authentication succeeded for ${email}, but the profile could not be loaded.`}</p><button className="outline wide" onClick={onLogout}>Sign out</button></div></div></div>}
 
+function ResetPassword({session}:{session:Session|null}){
+  const [newPassword,setNewPassword]=useState('');
+  const [confirmPassword,setConfirmPassword]=useState('');
+  const [busy,setBusy]=useState(false);
+  const [error,setError]=useState('');
+  const [complete,setComplete]=useState(false);
+
+  const backToLogin=async()=>{
+    await supabase!.auth.signOut();
+    window.location.assign('/');
+  };
+  const updatePassword=async(e:React.FormEvent)=>{
+    e.preventDefault();setError('');
+    if(!session){setError('This password recovery link is invalid or has expired. Request a new link from the login page.');return;}
+    if(!newPassword){setError('Please enter a new password.');return;}
+    if(newPassword.length<6){setError('Password must contain at least 6 characters.');return;}
+    if(newPassword!==confirmPassword){setError('Passwords do not match.');return;}
+    setBusy(true);
+    const {error:updateError}=await supabase!.auth.updateUser({password:newPassword});
+    if(updateError)setError(updateError.message||'We could not update your password.');
+    else{setNewPassword('');setConfirmPassword('');setComplete(true);}
+    setBusy(false);
+  };
+  return <div className="loginPage campusLogin"><section className="loginVisual" aria-label="Campus Library"><div className="loginBrand"><KgrLogo light/><p>KG Reddy College of Engineering &amp; Technology</p></div><div className="visualOverlay"><span className="eyebrow">THE CAMPUS LIBRARY</span><h1>A world of knowledge.<br/><em>Closer than ever.</em></h1><p>Your digital gateway to knowledge, resources and campus learning.</p></div><small className="loginVisualFooter">Campus Library | KG Reddy College</small></section><div className="loginPanel"><div className="loginFormWrap"><form className="loginCard" onSubmit={updatePassword} aria-busy={busy}><span className="formEyebrow">PASSWORD RECOVERY</span>{complete?<><h2>Password updated successfully.</h2><p>You can now sign in with your college email and new password.</p><button type="button" className="primary wide" onClick={()=>void backToLogin()}>Back to Login</button></>:<><h2>Set New Password</h2><p>Create a new password for your college library account.</p><label>New Password<input value={newPassword} onChange={e=>setNewPassword(e.target.value)} placeholder="Enter a new password" autoComplete="new-password" type="password" required disabled={!session}/></label><label>Confirm New Password<input value={confirmPassword} onChange={e=>setConfirmPassword(e.target.value)} placeholder="Confirm your new password" autoComplete="new-password" type="password" required disabled={!session}/></label>{!session&&<div className="authError" role="alert"><XCircle size={17}/>This password recovery link is invalid or has expired. Request a new link from the login page.</div>}{error&&<div className="authError" role="alert"><XCircle size={17}/>{error}</div>}<button className="primary wide" disabled={busy||!session}>{busy?<><span className="buttonSpinner" aria-hidden="true"/> Updating...</>:'Update Password'}</button>{!session&&<button type="button" className="linkBtn" onClick={()=>void backToLogin()}>Back to Login</button>}</>}<small className="securityNote"><ShieldCheck size={14}/> Your password is updated securely by Supabase.</small></form></div></div></div>;
+}
+
 function Login(){
-  const [mode,setMode]=useState<'login'|'signup'>('login');
+  const [mode,setMode]=useState<'login'|'signup'|'recovery'>('login');
   const [step,setStep]=useState<'email'|'otp'>('email');
   const [email,setEmail]=useState('');
   const [password,setPassword]=useState('');
@@ -230,6 +259,21 @@ function Login(){
     }
     setBusy(false);
   };
+  const sendPasswordRecovery=async(e:React.FormEvent)=>{
+    e.preventDefault();setError('');setMessage('');
+    const clean=email.trim().toLowerCase();
+    if(!clean){setError('Please enter your college email address.');return;}
+    if(!/^\S+@\S+\.\S+$/.test(clean)){setError('Please enter a valid email address.');return;}
+    if(!clean.endsWith(domain)){setError(`Please use your official college email ending with ${domain}.`);return;}
+    setBusy(true);
+    const {error:recoveryError}=await supabase!.auth.resetPasswordForEmail(clean,{redirectTo:`${window.location.origin}/reset-password`});
+    if(recoveryError){
+      const details=(recoveryError.message||'').toLowerCase();
+      if(details.includes('network')||details.includes('fetch')||details.includes('failed to fetch'))setError('We could not reach the password recovery service. Check your connection and try again.');
+      else setError(recoveryError.message||'We could not send the password recovery email.');
+    }else setMessage('If this college email has an account, a password recovery link has been sent. Check your inbox and open the link to set a new password.');
+    setBusy(false);
+  };
   const resendVerification=async()=>{
     if(resendSeconds>0||busy)return;
     setBusy(true);setError('');setMessage('');
@@ -273,18 +317,21 @@ function Login(){
   };
   const changeEmail=()=>{setStep('email');setOtp(Array(8).fill(''));setResendSeconds(0);setError('');setMessage('');};
   const resetMode=()=>{setMode(mode==='login'?'signup':'login');setStep('email');setError('');setMessage('');setUnverifiedEmail(false);setPassword('');setConfirmPassword('');setName('');setCollegeId('');setDepartment('');setYear('');};
+  const showRecovery=()=>{setMode('recovery');setStep('email');setError('');setMessage('');setUnverifiedEmail(false);setPassword('');setConfirmPassword('');};
+  const returnToLogin=()=>{setMode('login');setStep('email');setError('');setMessage('');setPassword('');setConfirmPassword('');};
   const emailForm=<>
     <span className="formEyebrow">YOUR CAMPUS. YOUR LIBRARY.</span>
-    <h2>{mode==='login'?'Welcome back':'Create your account'}</h2>
-    <p>{mode==='login'?'Sign in with your official college email.':'Create a library account using your official college email.'}</p>
+    <h2>{mode==='login'?'Welcome back':mode==='signup'?'Create your account':'Forgot Password?'}</h2>
+    <p>{mode==='login'?'Sign in with your official college email.':mode==='signup'?'Create a library account using your official college email.':'Enter your college email and we will send you a password recovery link.'}</p>
     {mode==='signup'&&<><label>Full name<input value={name} onChange={e=>setName(e.target.value)} placeholder="Your full name" required/></label><label>College ID<input value={collegeId} onChange={e=>setCollegeId(e.target.value)} placeholder="24QM1A6763" required/></label><label>Department<select value={department} onChange={e=>setDepartment(e.target.value)} required><option value="">Select department</option>{departments.length ? departments.map((dept) => <option key={dept.id} value={dept.id || dept.name || dept.code || ''}>{dept.name || dept.code || dept.id}</option>) : DEPARTMENT_OPTIONS.map((dept) => <option key={dept} value={dept}>{dept}</option>)}</select></label><label>Year of study<select value={year} onChange={e=>setYear(e.target.value)} required><option value="">Select year</option>{YEAR_OPTIONS.map((item) => <option key={item.value} value={String(item.value)}>{item.label}</option>)}</select></label></>}
     <label>College email<div className="inputIcon"><Mail size={17}/><input value={email} onChange={e=>setEmail(e.target.value)} placeholder="you@kgr.ac.in" autoComplete="email" type="email" required/></div></label>
-    <label>Password<input value={password} onChange={e=>setPassword(e.target.value)} placeholder="Enter your password" autoComplete={mode==='login'?'current-password':'new-password'} type="password" required/></label>
+    {mode!=='recovery'&&<label>Password<input value={password} onChange={e=>setPassword(e.target.value)} placeholder="Enter your password" autoComplete={mode==='login'?'current-password':'new-password'} type="password" required/></label>}
     {mode==='signup'&&<label>Confirm Password<input value={confirmPassword} onChange={e=>setConfirmPassword(e.target.value)} placeholder="Confirm your password" autoComplete="new-password" type="password" required/></label>}
     {error&&<div className="authError" role="alert"><XCircle size={17}/>{error}</div>}{message&&<div className="authSuccess" role="status"><CheckCircle2 size={17}/>{message}</div>}
     {unverifiedEmail&&<button type="button" className="linkBtn resendVerification" disabled={busy||resendSeconds>0} onClick={()=>void resendVerification()}>{resendSeconds>0?`Resend verification code in ${resendSeconds}s`:'Resend verification code'}</button>}
-    <button className="primary wide" disabled={busy}>{busy?<><span className="buttonSpinner" aria-hidden="true"/> Please wait...</>:<>{mode==='login'?'Sign in':'Create account & send code'}<ChevronRight size={17}/></>}</button>
-    <button type="button" className="linkBtn" onClick={resetMode}>{mode==='login'?"Don't have an account? Create one":"Already have an account? Sign in"}</button>
+    {mode==='login'&&<button type="button" className="linkBtn forgotPassword" onClick={showRecovery}>Forgot Password?</button>}
+    <button className="primary wide" disabled={busy}>{busy?<><span className="buttonSpinner" aria-hidden="true"/> Please wait...</>:<>{mode==='login'?'Sign in':mode==='signup'?'Create account & send code':'Send verification code'}<ChevronRight size={17}/></>}</button>
+    {mode==='recovery'?<button type="button" className="linkBtn" onClick={returnToLogin}>Back to Sign in</button>:<button type="button" className="linkBtn" onClick={resetMode}>{mode==='login'?"Don't have an account? Create one":"Already have an account? Sign in"}</button>}
     <small className="securityNote"><ShieldCheck size={14}/> Only official <b>@kgr.ac.in</b> accounts are allowed.</small>
   </>;
   const otpForm=<>
@@ -297,7 +344,7 @@ function Login(){
     <div className="otpActions"><button type="button" className="linkBtn" onClick={changeEmail} disabled={busy}>Change email</button><button type="button" className="linkBtn" onClick={()=>void resendVerification()} disabled={busy||resendSeconds>0}>{resendSeconds>0?`Resend code in ${resendSeconds}s`:'Resend code'}</button></div>
     <small className="securityNote"><ShieldCheck size={14}/> Your verification code is handled securely by Supabase.</small>
   </>;
-  return <div className="loginPage campusLogin"><section className="loginVisual" aria-label="Campus Library"><div className="loginBrand"><KgrLogo light/><p>KG Reddy College of Engineering &amp; Technology</p></div><div className="visualOverlay"><span className="eyebrow">THE CAMPUS LIBRARY</span><h1>A world of knowledge.<br/><em>Closer than ever.</em></h1><p>Your digital gateway to knowledge, resources and campus learning.</p><div className="academicVisual" aria-hidden="true"><div className="shelfBooks"><i/><i/><i/><i/><i/><i/></div><div className="shelfLine"/><span><BookOpen size={22}/> Learn. Explore. Discover.</span></div><div className="loginFeatures"><span><BookOpen size={17}/> Explore the collection</span><span><Bookmark size={17}/> Manage your borrowing</span><span><Library size={17}/> Access learning resources</span></div></div><small className="loginVisualFooter">Campus Library | KG Reddy College</small></section><div className="loginPanel"><div className="loginFormWrap"><form className="loginCard" onSubmit={step==='otp'?verifyOtp:(mode==='login'?login:createAccount)} aria-busy={busy}>{step==='email'?emailForm:otpForm}</form><p className="loginSupport">Need help accessing your account? Contact the college library.</p></div></div></div>
+  return <div className="loginPage campusLogin"><section className="loginVisual" aria-label="Campus Library"><div className="loginBrand"><KgrLogo light/><p>KG Reddy College of Engineering &amp; Technology</p></div><div className="visualOverlay"><span className="eyebrow">THE CAMPUS LIBRARY</span><h1>A world of knowledge.<br/><em>Closer than ever.</em></h1><p>Your digital gateway to knowledge, resources and campus learning.</p><div className="academicVisual" aria-hidden="true"><div className="shelfBooks"><i/><i/><i/><i/><i/><i/></div><div className="shelfLine"/><span><BookOpen size={22}/> Learn. Explore. Discover.</span></div><div className="loginFeatures"><span><BookOpen size={17}/> Explore the collection</span><span><Bookmark size={17}/> Manage your borrowing</span><span><Library size={17}/> Access learning resources</span></div></div><small className="loginVisualFooter">Campus Library | KG Reddy College</small></section><div className="loginPanel"><div className="loginFormWrap"><form className="loginCard" onSubmit={step==='otp'?verifyOtp:(mode==='login'?login:mode==='signup'?createAccount:sendPasswordRecovery)} aria-busy={busy}>{step==='email'?emailForm:otpForm}</form><p className="loginSupport">Need help accessing your account? Contact the college library.</p></div></div></div>
 }
 
 function Page({page,profile,setPage,globalSearch}:{page:string;profile:Profile;setPage:(p:string)=>void;globalSearch:string}){
