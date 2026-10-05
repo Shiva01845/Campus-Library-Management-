@@ -287,4 +287,4 @@ END;
 $$;
 
 REVOKE ALL ON FUNCTION public.accrue_overdue_fines() FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION public.accrue_overdue_fines() TO authenticated;
+GRANT EXECUTE ON FUNCTION public.accrue_overduse_fines() TO authenticated;
