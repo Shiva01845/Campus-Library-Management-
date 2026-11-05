@@ -1,4 +1,5 @@
 import { KgrLogo } from './components/KgrLogo';
+import { LibraryAIAssistant } from './components/LibraryAIAssistant';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { createClient, Session } from '@supabase/supabase-js';
@@ -116,6 +117,7 @@ function App(){
       </header>
       <div className="content" key={page}><Page page={page} profile={profile} setPage={setPage} globalSearch={globalSearch}/></div>
     </main>
+    <LibraryAIAssistant supabaseClient={supabase} role={profile.role} onNavigate={setPage}/>
   </div>;
 }
 
