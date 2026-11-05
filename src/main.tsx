@@ -101,8 +101,11 @@ function App(){
     return ()=>{cancelled=true};
   },[session]);
 
+  const isPasswordResetRoute = window.location.pathname === '/reset-password';
   if(!supabase) return <ConfigMissing/>;
   if(loading) return <Splash/>;
+  // A recovery session is intentionally kept outside the normal profile/role flow.
+  if(isPasswordResetRoute) return <ResetPassword session={session}/>;
   if(!session) return <Login/>;
   if(!profile) return <ProfilePending email={session.user.email || ''} onLogout={()=>supabase.auth.signOut()}/>;
   if(!profile.is_active) return <ProfilePending email={profile.email} inactive onLogout={()=>supabase.auth.signOut()}/>;
@@ -150,19 +153,49 @@ function ConfigMissing(){return <div className="loginPage"><div className="login
 function Splash(){return <div className="loginPage"><div className="loginPanel"><div className="loginCard"><div style={{marginBottom: "20px"}}><KgrLogo variant="compact" /></div><h2>Connecting to library...</h2><p>Checking your secure session.</p></div></div></div>}
 function ProfilePending({email,onLogout,inactive=false}:{email:string;onLogout:()=>void;inactive?:boolean}){return <div className="loginPage"><div className="loginPanel"><div className="loginCard"><div style={{marginBottom: "20px"}}><KgrLogo variant="compact" /></div><h2>{inactive?'Account inactive':'Profile not ready'}</h2><p>{inactive?'Your library account has been deactivated. Contact the librarian.':`Authentication succeeded for ${email}, but the profile could not be loaded.`}</p><button className="outline wide" onClick={onLogout}>Sign out</button></div></div></div>}
 
+function ResetPassword({session}:{session:Session|null}){
+  const [newPassword,setNewPassword]=useState('');
+  const [confirmPassword,setConfirmPassword]=useState('');
+  const [busy,setBusy]=useState(false);
+  const [error,setError]=useState('');
+  const [complete,setComplete]=useState(false);
+
+  const backToLogin=async()=>{
+    await supabase!.auth.signOut();
+    window.location.assign('/');
+  };
+  const updatePassword=async(e:React.FormEvent)=>{
+    e.preventDefault();setError('');
+    if(!session){setError('This password recovery link is invalid or has expired. Request a new link from the login page.');return;}
+    if(!newPassword){setError('Please enter a new password.');return;}
+    if(newPassword.length<6){setError('Password must contain at least 6 characters.');return;}
+    if(newPassword!==confirmPassword){setError('Passwords do not match.');return;}
+    setBusy(true);
+    const {error:updateError}=await supabase!.auth.updateUser({password:newPassword});
+    if(updateError)setError(updateError.message||'We could not update your password.');
+    else{setNewPassword('');setConfirmPassword('');setComplete(true);}
+    setBusy(false);
+  };
+  return <div className="loginPage campusLogin"><section className="loginVisual" aria-label="Campus Library"><div className="loginBrand"><KgrLogo light/><p>KG Reddy College of Engineering &amp; Technology</p></div><div className="visualOverlay"><span className="eyebrow">THE CAMPUS LIBRARY</span><h1>A world of knowledge.<br/><em>Closer than ever.</em></h1><p>Your digital gateway to knowledge, resources and campus learning.</p></div><small className="loginVisualFooter">Campus Library | KG Reddy College</small></section><div className="loginPanel"><div className="loginFormWrap"><form className="loginCard" onSubmit={updatePassword} aria-busy={busy}><span className="formEyebrow">PASSWORD RECOVERY</span>{complete?<><h2>Password updated successfully.</h2><p>You can now sign in with your college email and new password.</p><button type="button" className="primary wide" onClick={()=>void backToLogin()}>Back to Login</button></>:<><h2>Set New Password</h2><p>Create a new password for your college library account.</p><label>New Password<input value={newPassword} onChange={e=>setNewPassword(e.target.value)} placeholder="Enter a new password" autoComplete="new-password" type="password" required disabled={!session}/></label><label>Confirm New Password<input value={confirmPassword} onChange={e=>setConfirmPassword(e.target.value)} placeholder="Confirm your new password" autoComplete="new-password" type="password" required disabled={!session}/></label>{!session&&<div className="authError" role="alert"><XCircle size={17}/>This password recovery link is invalid or has expired. Request a new link from the login page.</div>}{error&&<div className="authError" role="alert"><XCircle size={17}/>{error}</div>}<button className="primary wide" disabled={busy||!session}>{busy?<><span className="buttonSpinner" aria-hidden="true"/> Updating...</>:'Update Password'}</button>{!session&&<button type="button" className="linkBtn" onClick={()=>void backToLogin()}>Back to Login</button>}</>}<small className="securityNote"><ShieldCheck size={14}/> Your password is updated securely by Supabase.</small></form></div></div></div>;
+}
+
 function Login(){
-  const [mode,setMode]=useState<'login'|'signup'>('login');
+  const [mode,setMode]=useState<'login'|'signup'|'recovery'>('login');
+  const [step,setStep]=useState<'email'|'otp'>('email');
   const [email,setEmail]=useState('');
   const [password,setPassword]=useState('');
-  const [passwordVisible,setPasswordVisible]=useState(false);
   const [name,setName]=useState('');
   const [collegeId,setCollegeId]=useState('');
   const [department,setDepartment]=useState('');
   const [year,setYear]=useState('');
   const [departments,setDepartments]=useState<Department[]>([]);
+  const [otp,setOtp]=useState<string[]>(Array(8).fill(''));
+  const otpInputs=useRef<Array<HTMLInputElement|null>>([]);
+  const [resendSeconds,setResendSeconds]=useState(0);
   const [busy,setBusy]=useState(false);
   const [message,setMessage]=useState('');
   const [error,setError]=useState('');
+  const [unverifiedEmail,setUnverifiedEmail]=useState(false);
 
   useEffect(() => {
     if (mode !== 'signup' || !supabase) return;
@@ -177,105 +210,136 @@ function Login(){
     void loadDepartments();
   }, [mode]);
 
-  const submit=async(e:React.FormEvent)=>{
-    e.preventDefault(); setError(''); setMessage('');
+  useEffect(()=>{
+    if(step!=='otp'||resendSeconds<=0)return;
+    const timer=window.setInterval(()=>setResendSeconds(seconds=>Math.max(0,seconds-1)),1000);
+    return ()=>window.clearInterval(timer);
+  },[step,resendSeconds]);
+
+  const friendlyOtpError=(raw:string,action:'send'|'verify')=>{
+    const text=raw.toLowerCase();
+    if(text.includes('rate limit')||text.includes('too many requests'))return 'Too many code requests. Please wait a moment before trying again.';
+    if(text.includes('network')||text.includes('fetch')||text.includes('failed to fetch'))return 'We could not reach the sign-in service. Check your connection and try again.';
+    if(action==='verify'&&(text.includes('expired')||text.includes('has expired')))return 'This verification code has expired. Request a new code and try again.';
+    if(action==='verify')return 'That verification code is invalid. Please check the eight digits and try again.';
+    if(text.includes('smtp')||text.includes('sender')||text.includes('email')||text.includes('mail'))return 'We could not send the verification email. Please try again shortly.';
+    return 'We could not send a verification code. Please try again.';
+  };
+
+  const createAccount=async(e:React.FormEvent)=>{
+    e?.preventDefault(); setError(''); setMessage('');
     const clean=email.trim().toLowerCase();
     const normalizedCollegeId = collegeId.trim().toUpperCase();
+    if(!clean){setError('Please enter your college email address.');return;}
+    if(!/^\S+@\S+\.\S+$/.test(clean)){setError('Please enter a valid email address.');return;}
     if(!clean.endsWith(domain)){setError(`Please use your official college email ending with ${domain}.`);return;}
+    if(!name.trim()){setError('Please enter your full name.'); return;}
+    if(!normalizedCollegeId){setError('Please enter your college ID.'); return;}
+    if(!department.trim()){setError('Please select a department.'); return;}
+    if(!year){setError('Please select a year of study.'); return;}
     if(password.length<6){setError('Password must contain at least 6 characters.');return;}
-    if(mode==='signup'){
-      if(!name.trim()){setError('Please enter your full name.'); return;}
-      if(!normalizedCollegeId){setError('Please enter your college ID.'); return;}
-      if(!department.trim()){setError('Please select a department.'); return;}
-      if(!year){setError('Please select a year of study.'); return;}
+    if(password!==confirmPassword){setError('Passwords do not match.');return;}
 
-      try {
-        const { data: existingCollegeId } = await supabase!.from('profiles').select('id').eq('college_id', normalizedCollegeId).maybeSingle();
-        if (existingCollegeId) {
-          setError('This College ID is already registered.');
-          setBusy(false);
-          return;
-        }
-      } catch {
-        // Ignore pre-check issues and let the database enforce the unique constraint.
+    try {
+      const { data: existingCollegeId } = await supabase!.from('profiles').select('id').eq('college_id', normalizedCollegeId).maybeSingle();
+      if (existingCollegeId) {
+        setError('This College ID is already registered.');
+        return;
       }
+    } catch {
+      // Let the database enforce the unique constraint if the optional pre-check is unavailable.
     }
     setBusy(true);
-    if(mode==='login'){
-      const {error}=await supabase!.auth.signInWithPassword({email:clean,password});
-      if(error)setError(error.message);
-    }else{
-      const selectedYear = Number(year);
-      const {data,error}=await supabase!.auth.signUp({
-        email: clean,
-        password,
-        options:{
-          data:{
-            full_name:name.trim()||clean.split('@')[0],
-            college_id: normalizedCollegeId,
-            role:'student',
-            department_id: department,
-            year_of_study: selectedYear,
-          }
-        }
-      });
-      if(error){
-        const msg = (error.message || '').toLowerCase();
-        if (msg.includes('already registered') || msg.includes('already exists') || msg.includes('duplicate') || msg.includes('unique constraint')) {
-          setError('An account with this email already exists. Please sign in instead.');
-        } else if (error.status === 500 || msg.includes('database error saving new user')) {
-          setError('Supabase could not save the new profile. Check that the latest registration trigger SQL is applied and that this College ID is not already registered.');
-        } else {
-          setError(error.message || 'Unable to create the account. Please check your details and try again.');
-        }
-      } else {
-        if(data.session) setMessage('Account created. You are signed in.');
-        else setMessage('Account created. Check your college email and confirm your address before signing in.');
+    const {data:signupData,error:signupError}=await supabase!.auth.signUp({email:clean,password,options:{data:{full_name:name.trim()||clean.split('@')[0],college_id:normalizedCollegeId,role:'student',department_id:department,year_of_study:Number(year)}}});
+    if(signupError){
+      if(import.meta.env.DEV)console.error('Supabase signup failed.',{message:signupError.message,status:signupError.status,code:signupError.code});
+      const details=(signupError.message||'').toLowerCase();
+      if(details.includes('already registered')||details.includes('already exists')||details.includes('duplicate'))setError('An account with this email already exists. Please sign in instead.');
+      else setError(friendlyOtpError(signupError.message||'', 'send'));
+    }
+    else{
+      if(signupData.session)await supabase!.auth.signOut();
+      setOtp(Array(8).fill(''));
+      setStep('otp');
+      setResendSeconds(60);
+      setMessage('We sent a verification code to your email.');
+      window.setTimeout(()=>otpInputs.current[0]?.focus(),0);
+    }
+    setBusy(false);
+  };
+  const login=async(e:React.FormEvent)=>{
+    e.preventDefault();setError('');setMessage('');setUnverifiedEmail(false);
+    const clean=email.trim().toLowerCase();
+    if(!clean){setError('Please enter your college email address.');return;}
+    if(!/^\S+@\S+\.\S+$/.test(clean)){setError('Please enter a valid email address.');return;}
+    if(!clean.endsWith(domain)){setError(`Please use your official college email ending with ${domain}.`);return;}
+    if(!password){setError('Please enter your password.');return;}
+    setBusy(true);
+    const {error:loginError}=await supabase!.auth.signInWithPassword({email:clean,password});
+    if(loginError){
+      const details=(loginError.message||'').toLowerCase();
+      if(details.includes('not confirmed')||details.includes('not verified')){setError('Please verify your email before logging in.');setUnverifiedEmail(true);}
+      else setError('Invalid email or password.');
+    }
+    setBusy(false);
+  };
+  const sendPasswordRecovery=async(e:React.FormEvent)=>{
+    e.preventDefault();setError('');setMessage('');
+    const clean=email.trim().toLowerCase();
+    if(!clean){setError('Please enter your college email address.');return;}
+    if(!/^\S+@\S+\.\S+$/.test(clean)){setError('Please enter a valid email address.');return;}
+    if(!clean.endsWith(domain)){setError(`Please use your official college email ending with ${domain}.`);return;}
+    setBusy(true);
+    const {error:recoveryError}=await supabase!.auth.resetPasswordForEmail(clean,{redirectTo:`${window.location.origin}/reset-password`});
+    if(recoveryError){
+      const details=(recoveryError.message||'').toLowerCase();
+      if(details.includes('network')||details.includes('fetch')||details.includes('failed to fetch'))setError('We could not reach the password recovery service. Check your connection and try again.');
+      else setError(recoveryError.message||'We could not send the password recovery email.');
+    }else setMessage('If this college email has an account, a password recovery link has been sent. Check your inbox and open the link to set a new password.');
+    setBusy(false);
+  };
+  const resendVerification=async()=>{
+    if(resendSeconds>0||busy)return;
+    setBusy(true);setError('');setMessage('');
+    const {error:resendError}=await supabase!.auth.resend({type:'signup',email:email.trim().toLowerCase()});
+    if(resendError){
+      if(import.meta.env.DEV)console.error('Supabase verification resend failed.',{message:resendError.message,status:resendError.status,code:resendError.code});
+      setError(friendlyOtpError(resendError.message||'', 'send'));
+    }else{setOtp(Array(8).fill(''));setResendSeconds(60);setMessage('A new verification code has been sent to your email.');window.setTimeout(()=>otpInputs.current[0]?.focus(),0);}
+    setBusy(false);
+  };
+  const updateOtp=(index:number,value:string)=>{
+    const digit=value.replace(/\D/g,'').slice(-1);
+    const next=[...otp]; next[index]=digit; setOtp(next);
+    if(digit&&index<7)otpInputs.current[index+1]?.focus();
+  };
+  const pasteOtp=(event:React.ClipboardEvent<HTMLInputElement>)=>{
+    event.preventDefault();
+    const digits=event.clipboardData.getData('text').replace(/\D/g,'').slice(0,8);
+    if(!digits)return;
+    const next=Array(8).fill(''); digits.split('').forEach((digit,index)=>next[index]=digit); setOtp(next);
+    otpInputs.current[Math.min(digits.length,8)-1]?.focus();
+  };
+  const verifyOtp=async(e:React.FormEvent)=>{
+    e.preventDefault(); setError(''); setMessage('');
+    const token=otp.join('');
+    if(token.length!==8){setError('Enter the complete eight-digit verification code.');return;}
+    setBusy(true);
+    const {data,error:verifyError}=await supabase!.auth.verifyOtp({email:email.trim().toLowerCase(),token,type:'email'});
+    if(verifyError)setError(friendlyOtpError(verifyError.message||'', 'verify'));
+    else if(!data.session)setError('We could not verify your email. Please request a new code and try again.');
+    else{
+      const {error:signOutError}=await supabase!.auth.signOut();
+      if(signOutError){
+        if(import.meta.env.DEV)console.error('Supabase sign-out after verification failed.',{message:signOutError.message,status:signOutError.status,code:signOutError.code});
+        setError('Your email was verified, but we could not return to the login page. Please refresh and sign in.');
+      }else{
+        setMode('login');setStep('email');setPassword('');setConfirmPassword('');setOtp(Array(8).fill(''));setResendSeconds(0);setMessage('Email verified successfully. You can now log in with your email and password.');
       }
     }
     setBusy(false);
   };
-  return <div className="loginPage campusLogin">
-    <section className="loginVisual" aria-label="Campus Library">
-      <div className="loginBrand"><KgrLogo light/><p>KG Reddy College of Engineering &amp; Technology</p></div>
-      <div className="visualOverlay">
-        <span className="eyebrow">THE CAMPUS LIBRARY</span>
-        <h1>A world of knowledge.<br/><em>Closer than ever.</em></h1>
-        <p>Your digital gateway to knowledge, resources and campus learning.</p>
-        <div className="academicVisual" aria-hidden="true"><div className="shelfBooks"><i/><i/><i/><i/><i/><i/></div><div className="shelfLine"/><span><BookOpen size={22}/> Learn. Explore. Discover.</span></div>
-        <div className="loginFeatures"><span><BookOpen size={17}/> Explore the collection</span><span><Bookmark size={17}/> Manage your borrowing</span><span><Library size={17}/> Access learning resources</span></div>
-      </div>
-      <small className="loginVisualFooter">Campus Library | KG Reddy College</small>
-    </section>
-    <div className="loginPanel">
-      <div className="loginFormWrap">
-        <form className="loginCard" onSubmit={submit} aria-busy={busy}>
-          <span className="formEyebrow">YOUR CAMPUS. YOUR LIBRARY.</span>
-          <h2>{mode==='login'?'Welcome back':'Create your account'}</h2>
-          <p>{mode==='login'?'Sign in with your official college email.':'Create a library account using your official college email.'}</p>
-          {mode==='signup'&&<>
-            <label>Full name<input value={name} onChange={e=>setName(e.target.value)} placeholder="Your full name" required/></label>
-            <label>College ID<input value={collegeId} onChange={e=>setCollegeId(e.target.value)} placeholder="24QM1A6763" required/></label>
-            <label>Department<select value={department} onChange={e=>setDepartment(e.target.value)} required><option value="">Select department</option>{departments.length ? departments.map((dept) => <option key={dept.id} value={dept.id || dept.name || dept.code || ''}>{dept.name || dept.code || dept.id}</option>) : DEPARTMENT_OPTIONS.map((dept) => <option key={dept} value={dept}>{dept}</option>)}</select></label>
-            <label>Year of study<select value={year} onChange={e=>setYear(e.target.value)} required><option value="">Select year</option>{YEAR_OPTIONS.map((item) => <option key={item.value} value={String(item.value)}>{item.label}</option>)}</select></label>
-          </>}
-          <label>College email<div className="inputIcon"><Mail size={17}/><input value={email} onChange={e=>setEmail(e.target.value)} placeholder="you@kgr.ac.in" autoComplete="username" type="email" required/></div></label>
-          <label>Password
-            <div className="passwordField">
-              <input value={password} onChange={e=>setPassword(e.target.value)} placeholder="Enter your password" autoComplete={mode==='login'?'current-password':'new-password'} type={passwordVisible?'text':'password'} required/>
-              <button type="button" className="passwordVisibility" aria-label={passwordVisible?'Hide password':'Show password'} aria-pressed={passwordVisible} onClick={()=>setPasswordVisible(value=>!value)}>{passwordVisible?<EyeOff size={18}/>:<Eye size={18}/>}</button>
-            </div>
-          </label>
-          {error&&<div className="authError" role="alert"><XCircle size={17}/>{error}</div>}
-          {message&&<div className="authSuccess" role="status"><CheckCircle2 size={17}/>{message}</div>}
-          <button className="primary wide" disabled={busy}>{busy?<><span className="buttonSpinner" aria-hidden="true"/> Please wait...</>:<>{mode==='login'?'Sign in':'Create account'}<ChevronRight size={17}/></>}</button>
-          <button type="button" className="linkBtn" onClick={()=>{setMode(mode==='login'?'signup':'login');setPasswordVisible(false);setError('');setMessage('');setName('');setCollegeId('');setDepartment('');setYear('')}}>{mode==='login'?"Don't have an account? Create one":"Already have an account? Sign in"}</button>
-          <small className="securityNote"><ShieldCheck size={14}/> Only official <b>@kgr.ac.in</b> accounts are allowed.</small>
-        </form>
-        <p className="loginSupport">Need help accessing your account? Contact the college library.</p>
-      </div>
-    </div>
-  </div>
+  return <div className="loginPage campusLogin"><section className="loginVisual" aria-label="Campus Library"><div className="loginBrand"><KgrLogo light/><p>KG Reddy College of Engineering &amp; Technology</p></div><div className="visualOverlay"><span className="eyebrow">THE CAMPUS LIBRARY</span><h1>A world of knowledge.<br/><em>Closer than ever.</em></h1><p>Your digital gateway to knowledge, resources and campus learning.</p><div className="academicVisual" aria-hidden="true"><div className="shelfBooks"><i/><i/><i/><i/><i/><i/></div><div className="shelfLine"/><span><BookOpen size={22}/> Learn. Explore. Discover.</span></div><div className="loginFeatures"><span><BookOpen size={17}/> Explore the collection</span><span><Bookmark size={17}/> Manage your borrowing</span><span><Library size={17}/> Access learning resources</span></div></div><small className="loginVisualFooter">Campus Library | KG Reddy College</small></section><div className="loginPanel"><div className="loginFormWrap"><form className="loginCard" onSubmit={submit} aria-busy={busy}><span className="formEyebrow">YOUR CAMPUS. YOUR LIBRARY.</span><h2>{mode==='login'?'Welcome back':'Create your account'}</h2><p>{mode==='login'?'Sign in with your official college email.':'Create a library account using your official college email.'}</p>{mode==='signup'&&<><label>Full name<input value={name} onChange={e=>setName(e.target.value)} placeholder="Your full name" required/></label><label>College ID<input value={collegeId} onChange={e=>setCollegeId(e.target.value)} placeholder="24QM1A6763" required/></label><label>Department<select value={department} onChange={e=>setDepartment(e.target.value)} required><option value="">Select department</option>{departments.length ? departments.map((dept) => <option key={dept.id} value={dept.id || dept.name || dept.code || ''}>{dept.name || dept.code || dept.id}</option>) : DEPARTMENT_OPTIONS.map((dept) => <option key={dept} value={dept}>{dept}</option>)}</select></label><label>Year of study<select value={year} onChange={e=>setYear(e.target.value)} required><option value="">Select year</option>{YEAR_OPTIONS.map((item) => <option key={item.value} value={String(item.value)}>{item.label}</option>)}</select></label></> }<label>College email<div className="inputIcon"><Mail size={17}/><input value={email} onChange={e=>setEmail(e.target.value)} placeholder="you@kgr.ac.in" autoComplete="username" type="email" required/></div></label><label>Password<input value={password} onChange={e=>setPassword(e.target.value)} placeholder="Enter your password" autoComplete={mode==='login'?'current-password':'new-password'} type="password" required/></label>{error&&<div className="authError" role="alert"><XCircle size={17}/>{error}</div>}{message&&<div className="authSuccess" role="status"><CheckCircle2 size={17}/>{message}</div>}<button className="primary wide" disabled={busy}>{busy?<><span className="buttonSpinner" aria-hidden="true"/> Please wait...</>:<>{mode==='login'?'Sign in':'Create account'}<ChevronRight size={17}/></>}</button><button type="button" className="linkBtn" onClick={()=>{setMode(mode==='login'?'signup':'login');setError('');setMessage('');setName('');setCollegeId('');setDepartment('');setYear('')}}>{mode==='login'?"Don't have an account? Create one":"Already have an account? Sign in"}</button><small className="securityNote"><ShieldCheck size={14}/> Only official <b>@kgr.ac.in</b> accounts are allowed.</small></form><p className="loginSupport">Need help accessing your account? Contact the college library.</p></div></div></div>
 }
 
 function Page({page,profile,setPage,globalSearch}:{page:string;profile:Profile;setPage:(p:string)=>void;globalSearch:string}){
