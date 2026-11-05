@@ -1,0 +1,127 @@
+{
+  "planHash": "1c609d236a11e2710dc8c0f64aa32ec78d0bfc1b3feb99f1ee62dc15646f830f",
+  "phase": "standalone",
+  "recordedAtUtc": "2026-11-05T18:09:16.0632553Z",
+  "retryCount": 0,
+  "resetBaseline": false,
+  "complete": true,
+  "result": {
+    "setupSucceeded": true,
+    "setupDurationMs": 0,
+    "setupFailureOutput": null,
+    "assertions": [
+      {
+        "name": "production-build",
+        "kind": "process",
+        "verificationMethod": "exit-code",
+        "passed": true,
+        "timedOut": false,
+        "skipped": false,
+        "skippedReason": null,
+        "exitCode": 0,
+        "outputSample": "\r\n\u003E smart-library-management-system@1.0.0 build\r\n\u003E vite build\r\n\r\n\u001B[36mvite v8.3.2 \u001B[32mbuilding client environment for production...\u001B[36m\u001B[39m\r\ntransforming...\r\n\u2713 2306 modules transformed.\r\nrendering chunks...\r\ncomputing gzip size...\r\ndist/index.html                             0.39 kB \u2502 gzip:   0.27 kB\r\ndist/assets/index-GiF_PJwq.css            115.45 kB \u2502 gzip:  22.96 kB\r\ndist/assets/LibraryAnalytics-C99SAUGn.js  447.60 kB \u2502 gzip: 125.64 kB\r\ndist/assets/index-BKixDaYo.js             590.95 kB \u2502 gzip: 160.92 kB\r\n\r\n\u001B[33m[plugin builtin:vite-reporter] \r\n(!) Some chunks are larger than 500 kB after minification. Consider:\r\n- Using dynamic import() to code-split the application\r\n- Use build.rolldownOptions.output.codeSplitting to improve chunking: https://rolldown.rs/reference/OutputOptions.codeSplitting\r\n- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.\u001B[39m\r\n\u001B[32m\u2713 built in 2.12s\u001B[39m\r\n",
+        "durationMs": 4164
+      },
+      {
+        "name": "tsc-no-emit",
+        "kind": "process",
+        "verificationMethod": "exit-code",
+        "passed": true,
+        "timedOut": false,
+        "skipped": false,
+        "skippedReason": null,
+        "exitCode": 0,
+        "outputSample": "",
+        "durationMs": 3637
+      },
+      {
+        "name": "tests-pass",
+        "kind": "process",
+        "verificationMethod": "test-results",
+        "passed": true,
+        "timedOut": false,
+        "skipped": false,
+        "skippedReason": null,
+        "exitCode": 0,
+        "outputSample": "\r\n\u003E smart-library-management-system@1.0.0 test\r\n\u003E vitest run src/components/LibraryAnalytics.test.ts\r\n\r\n\r\n RUN  v5.1.0 C:/Users/vinay/Downloads/smart-library-management-system-v3-books-fixed2/library-management-system\r\n\r\n\r\n Test Files  1 passed (1)\r\n      Tests  6 passed (6)\r\n   Start at  23:39:14\r\n   Duration  1.54s (import 87%, tests 7%, transform 5%, worker 1%)\r\n\r\n",
+        "durationMs": 3179,
+        "testResults": {
+          "testFramework": "vitest",
+          "runnerDetectedFrom": "package_json",
+          "testsTotal": 6,
+          "testsPassed": 6,
+          "testsFailed": 0,
+          "testsSkipped": 0,
+          "parseFailed": false
+        }
+      },
+      {
+        "name": "dev-server-serves-home",
+        "kind": "http-probe",
+        "verificationMethod": "http-status",
+        "passed": true,
+        "timedOut": false,
+        "skipped": false,
+        "skippedReason": null,
+        "exitCode": null,
+        "outputSample": "HTTP 200\n\u003C!doctype html\u003E\u003Chtml\u003E\u003Chead\u003E\n  \u003Cscript type=\u0022module\u0022\u003Eimport { injectIntoGlobalHook } from \u0022/@react-refresh\u0022;\ninjectIntoGlobalHook(window);\nwindow.$RefreshReg$ = () =\u003E {};\nwindow.$RefreshSig$ = () =\u003E (type) =\u003E type;\u003C/script\u003E\n\n  \u003Cscript type=\u0022module\u0022 src=\u0022/@vite/client\u0022\u003E\u003C/script\u003E\n\u003Cmeta charset=\u0022UTF-8\u0022/\u003E\u003Cmeta name=\u0022viewport\u0022 content=\u0022width=device-width,initial-scale=1.0\u0022/\u003E\u003Cmeta name=\u0022theme-color\u0022 content=\u0022#f97316\u0022/\u003E\u003Ctitle\u003ECampus Library\u003C/title\u003E\u003C/head\u003E\u003Cbody\u003E\u003Cdiv id=\u0022root\u0022\u003E\u003C/div\u003E\u003Cscript type=\u0022module\u0022 src=\u0022/src/main.tsx?t=1793902095434\u0022\u003E\u003C/script\u003E\u003C/body\u003E\u003C/html\u003E\n",
+        "durationMs": 101
+      }
+    ],
+    "executions": [
+      {
+        "source": "production-build",
+        "resolvedExecutable": "C:\\Program Files\\nodejs\\npm.CMD",
+        "args": [
+          "run",
+          "build"
+        ],
+        "cwd": "C:\\Users\\vinay\\Downloads\\smart-library-management-system-v3-books-fixed2\\library-management-system",
+        "env": {},
+        "prependPath": [],
+        "platform": "win32"
+      },
+      {
+        "source": "tsc-no-emit",
+        "resolvedExecutable": "C:\\Program Files\\nodejs\\npx.CMD",
+        "args": [
+          "tsc",
+          "--noEmit"
+        ],
+        "cwd": "C:\\Users\\vinay\\Downloads\\smart-library-management-system-v3-books-fixed2\\library-management-system",
+        "env": {},
+        "prependPath": [],
+        "platform": "win32"
+      },
+      {
+        "source": "tests-pass",
+        "resolvedExecutable": "C:\\Program Files\\nodejs\\npm.CMD",
+        "args": [
+          "test"
+        ],
+        "cwd": "C:\\Users\\vinay\\Downloads\\smart-library-management-system-v3-books-fixed2\\library-management-system",
+        "env": {},
+        "prependPath": [],
+        "platform": "win32"
+      },
+      {
+        "source": "dev-server-serves-home",
+        "resolvedExecutable": "C:\\Program Files\\nodejs\\npm.CMD",
+        "args": [
+          "run",
+          "dev",
+          "--",
+          "--host",
+          "127.0.0.1",
+          "--port",
+          "4173",
+          "--strictPort"
+        ],
+        "cwd": "C:\\Users\\vinay\\Downloads\\smart-library-management-system-v3-books-fixed2\\library-management-system",
+        "env": {},
+        "prependPath": [],
+        "platform": "win32"
+      }
+    ]
+  }
+}

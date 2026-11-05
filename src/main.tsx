@@ -1,14 +1,18 @@
 import { KgrLogo } from './components/KgrLogo';
+import { LibraryAIAssistant } from './components/LibraryAIAssistant';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { createClient, Session } from '@supabase/supabase-js';
 import {
-  Search, Bell, BookOpen, Users, LayoutDashboard, ArrowLeftRight,
+  Search, Bell, BookOpen, Users, LayoutDashboard, ArrowLeftRight, Activity, CalendarDays,
   Bookmark, BarChart3, Tags, Settings, LogOut, Plus, ChevronRight,
   Menu, UserRound, CreditCard, AlertCircle, Library, Download, RefreshCw,
-  Mail, ShieldCheck, CheckCircle2, XCircle
+  Mail, ShieldCheck, CheckCircle2, Clock3, XCircle, Eye, EyeOff, ExternalLink,
+  FileText, Globe2, Archive, BookMarked
 } from 'lucide-react';
 import './styles.css';
+
+const LibraryAnalytics = React.lazy(() => import('./components/LibraryAnalytics').then(({ LibraryAnalytics: component }) => ({ default: component })));
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL as string | undefined;
 const SUPABASE_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY as string | undefined;
@@ -18,12 +22,13 @@ type Role = 'student' | 'faculty' | 'librarian' | 'admin';
 type Profile = { id:string; email:string; full_name:string|null; college_id:string|null; role:Role; department_id:string|null; phone:string|null; year_of_study:number|null; is_active:boolean; };
 type Department = { id:string; name:string|null; code:string|null };
 type Category = { id:string; name:string; description:string|null };
-type LibraryResource = { id:string; title:string; description:string|null; resource_type:string; url:string; created_at:string; created_by:string|null; is_active:boolean };
+type LibraryResource = { id:string; title:string; description:string|null; resource_type:string; url:string; uploaded_at:string; created_by:string|null; is_active:boolean };
 type Book = { id:string; accession_code:string; title:string; subtitle:string|null; isbn:string|null; description:string|null; publisher:string|null; publication_year:number|null; edition:string|null; language:string|null; category_id:string|null; cover_url:string|null; ebook_url:string|null; total_copies:number; available_copies:number; is_active:boolean };
 type Loan = { id:string; copy_id:string; user_id:string; issued_by:string|null; issue_date:string; due_date:string; returned_date:string|null; returned_to:string|null; status:'active'|'returned'|'overdue'; renewal_count:number; notes:string|null; };
 type Reservation = { id:string; book_id:string; user_id:string; reserved_at:string; ready_at:string|null; expires_at:string|null; fulfilled_at:string|null; status:'pending'|'ready'|'fulfilled'|'cancelled'|'expired'; queue_position:number|null };
 type Fine = { id:string; loan_id:string | null; user_id:string; amount:number; reason:string; status:'pending'|'paid'|'waived'; issued_at:string; paid_at:string|null; waived_at:string|null; waived_by:string|null; notes?:string|null; accrual_date?:string|null; };
 type Notification = { id:string; user_id:string; title:string; message:string; type:string|null; is_read:boolean; created_at:string };
+type DashboardNotification = Pick<Notification,'id'|'title'|'type'|'created_at'>;
 type BookCopy = { id:string; book_id:string; accession_code?:string|null; copy_number:string; shelf_number:string|null; rack_number:string|null; status:string; condition:string|null; price?:number|string|null; acquired_date?:string|null; notes?:string|null; };
 
 const domain = '@kgr.ac.in';
@@ -54,6 +59,15 @@ function getDepartmentName(value: string | null | undefined, departments: Depart
     return department.id === normalized || name === normalized || code === normalized || name.toLowerCase() === normalized.toLowerCase() || code.toLowerCase() === normalized.toLowerCase();
   });
   return match?.name || match?.code || normalized;
+}
+
+function getSafeResourceUrl(value:string) {
+  try {
+    const url=new URL(value);
+    return url.protocol==='https:'||url.protocol==='http:'?url.toString():null;
+  } catch {
+    return null;
+  }
 }
 
 function App(){
@@ -97,18 +111,28 @@ function App(){
   if(!profile.is_active) return <ProfilePending email={profile.email} inactive onLogout={()=>supabase.auth.signOut()}/>;
 
   const isAdmin = profile.role==='librarian' || profile.role==='admin';
+  const isStudent = profile.role==='student';
   const nav = isAdmin ? [
     ['dashboard','Dashboard',LayoutDashboard],['books','Books',BookOpen],['members','Members',Users],['circulation','Issue / Return',ArrowLeftRight],['reservations','Reservations',Bookmark],['fineledger','Fine Ledger',CreditCard],['resources','Library Resources',Library],['analytics','Reports & Analytics',BarChart3],['categories','Categories',Tags],['notifications','Notifications',Bell],['settings','Settings',Settings],['profile','Profile',UserRound]
   ] : [
     ['dashboard','Home',LayoutDashboard],['search','Search Books',Search],['mybooks','My Books',BookOpen],['reservations','Reservations',Bookmark],['fines','Fines & Payments',CreditCard],['notifications','Notifications',Bell],['resources','Library Resources',Library],['profile','Profile',UserRound]
   ];
+  const studentNavGroups = [
+    {label:'DISCOVER',items:[['dashboard','Home',LayoutDashboard],['search','Browse books',Search],['resources','Learning resources',Library]]},
+    {label:'MY LIBRARY',items:[['mybooks','My books',BookOpen],['reservations','Reservations',Bookmark],['fines','Fines & payments',CreditCard]]},
+    {label:'ACCOUNT',items:[['notifications','Notifications',Bell],['profile','Profile',UserRound]]},
+  ];
 
-  return <div className="app">
+  return <div className={'app '+(isAdmin?'adminApp':isStudent?'studentApp':'')}>
     {mobileOpen&&<button className="mobileBackdrop" aria-label="Close navigation" onClick={()=>setMobileOpen(false)}/>}
     <aside className={'sidebar '+(mobileOpen?'open':'')}>
-      <div className="brand" style={{padding: "16px 20px"}}><KgrLogo variant="full" light={true} /></div>
-      <div className="rolePill">{isAdmin?'LIBRARIAN / ADMIN':profile.role.toUpperCase()}</div>
-      <nav aria-label="Library navigation">{nav.map(([id,label,Icon]:any)=><button key={id} aria-current={page===id?'page':undefined} className={page===id?'active':''} onClick={()=>{setPage(id);setMobileOpen(false)}}><Icon size={18}/><span>{label}</span></button>)}</nav>
+      <div className={'brand '+(isStudent?'studentBrand':'adminBrand')}>
+        <KgrLogo variant="mini" light/>
+        <div className={isStudent?'studentBrandCaption':'adminBrandCaption'}><strong>Campus Library</strong><span>{isStudent?'Your reading space':'Management portal'}</span></div>
+      </div>
+      <div className="rolePill">{isAdmin?'LIBRARIAN / ADMIN':isStudent?'STUDENT LIBRARY':profile.role.toUpperCase()}</div>
+      <nav aria-label="Library navigation">{isStudent?studentNavGroups.map(group=><div className="studentNavGroup" key={group.label}><span className="studentNavHeading">{group.label}</span>{group.items.map(([id,label,Icon]:any)=><button key={id} aria-current={page===id?'page':undefined} className={page===id?'active':''} onClick={()=>{setPage(id);setMobileOpen(false)}}><Icon size={18}/><span>{label}</span></button>)}</div>):nav.map(([id,label,Icon]:any)=><button key={id} aria-current={page===id?'page':undefined} className={page===id?'active':''} onClick={()=>{setPage(id);setMobileOpen(false)}}><Icon size={18}/><span>{label}</span></button>)}</nav>
+      {isStudent&&<button className="studentSidebarProfile" onClick={()=>{setPage('profile');setMobileOpen(false)}}><span className="studentSidebarAvatar">{initials(profile.full_name||profile.email)}</span><span><b>{profile.full_name||profile.email.split('@')[0]}</b><small>{profile.college_id||profile.email}</small></span><ChevronRight size={15}/></button>}
       <div className="sidebarBottom"><button onClick={()=>supabase!.auth.signOut()}><LogOut size={18}/>Logout</button></div>
     </aside>
     <main className="main">
@@ -119,6 +143,7 @@ function App(){
       </header>
       <div className="content" key={page}><Page page={page} profile={profile} setPage={setPage} globalSearch={globalSearch}/></div>
     </main>
+    <LibraryAIAssistant supabaseClient={supabase} role={profile.role} onNavigate={setPage}/>
   </div>;
 }
 
@@ -159,7 +184,6 @@ function Login(){
   const [step,setStep]=useState<'email'|'otp'>('email');
   const [email,setEmail]=useState('');
   const [password,setPassword]=useState('');
-  const [confirmPassword,setConfirmPassword]=useState('');
   const [name,setName]=useState('');
   const [collegeId,setCollegeId]=useState('');
   const [department,setDepartment]=useState('');
@@ -315,36 +339,7 @@ function Login(){
     }
     setBusy(false);
   };
-  const changeEmail=()=>{setStep('email');setOtp(Array(8).fill(''));setResendSeconds(0);setError('');setMessage('');};
-  const resetMode=()=>{setMode(mode==='login'?'signup':'login');setStep('email');setError('');setMessage('');setUnverifiedEmail(false);setPassword('');setConfirmPassword('');setName('');setCollegeId('');setDepartment('');setYear('');};
-  const showRecovery=()=>{setMode('recovery');setStep('email');setError('');setMessage('');setUnverifiedEmail(false);setPassword('');setConfirmPassword('');};
-  const returnToLogin=()=>{setMode('login');setStep('email');setError('');setMessage('');setPassword('');setConfirmPassword('');};
-  const emailForm=<>
-    <span className="formEyebrow">YOUR CAMPUS. YOUR LIBRARY.</span>
-    <h2>{mode==='login'?'Welcome back':mode==='signup'?'Create your account':'Forgot Password?'}</h2>
-    <p>{mode==='login'?'Sign in with your official college email.':mode==='signup'?'Create a library account using your official college email.':'Enter your college email and we will send you a password recovery link.'}</p>
-    {mode==='signup'&&<><label>Full name<input value={name} onChange={e=>setName(e.target.value)} placeholder="Your full name" required/></label><label>College ID<input value={collegeId} onChange={e=>setCollegeId(e.target.value)} placeholder="24QM1A6763" required/></label><label>Department<select value={department} onChange={e=>setDepartment(e.target.value)} required><option value="">Select department</option>{departments.length ? departments.map((dept) => <option key={dept.id} value={dept.id || dept.name || dept.code || ''}>{dept.name || dept.code || dept.id}</option>) : DEPARTMENT_OPTIONS.map((dept) => <option key={dept} value={dept}>{dept}</option>)}</select></label><label>Year of study<select value={year} onChange={e=>setYear(e.target.value)} required><option value="">Select year</option>{YEAR_OPTIONS.map((item) => <option key={item.value} value={String(item.value)}>{item.label}</option>)}</select></label></>}
-    <label>College email<div className="inputIcon"><Mail size={17}/><input value={email} onChange={e=>setEmail(e.target.value)} placeholder="you@kgr.ac.in" autoComplete="email" type="email" required/></div></label>
-    {mode!=='recovery'&&<label>Password<input value={password} onChange={e=>setPassword(e.target.value)} placeholder="Enter your password" autoComplete={mode==='login'?'current-password':'new-password'} type="password" required/></label>}
-    {mode==='signup'&&<label>Confirm Password<input value={confirmPassword} onChange={e=>setConfirmPassword(e.target.value)} placeholder="Confirm your password" autoComplete="new-password" type="password" required/></label>}
-    {error&&<div className="authError" role="alert"><XCircle size={17}/>{error}</div>}{message&&<div className="authSuccess" role="status"><CheckCircle2 size={17}/>{message}</div>}
-    {unverifiedEmail&&<button type="button" className="linkBtn resendVerification" disabled={busy||resendSeconds>0} onClick={()=>void resendVerification()}>{resendSeconds>0?`Resend verification code in ${resendSeconds}s`:'Resend verification code'}</button>}
-    {mode==='login'&&<button type="button" className="linkBtn forgotPassword" onClick={showRecovery}>Forgot Password?</button>}
-    <button className="primary wide" disabled={busy}>{busy?<><span className="buttonSpinner" aria-hidden="true"/> Please wait...</>:<>{mode==='login'?'Sign in':mode==='signup'?'Create account & send code':'Send verification code'}<ChevronRight size={17}/></>}</button>
-    {mode==='recovery'?<button type="button" className="linkBtn" onClick={returnToLogin}>Back to Sign in</button>:<button type="button" className="linkBtn" onClick={resetMode}>{mode==='login'?"Don't have an account? Create one":"Already have an account? Sign in"}</button>}
-    <small className="securityNote"><ShieldCheck size={14}/> Only official <b>@kgr.ac.in</b> accounts are allowed.</small>
-  </>;
-  const otpForm=<>
-    <span className="formEyebrow">YOUR CAMPUS. YOUR LIBRARY.</span>
-    <h2>Check your email</h2>
-    <p>Enter the eight-digit verification code sent to <b>{email.trim().toLowerCase()}</b>.</p>
-    <div className="otpInputs" role="group" aria-label="Eight-digit verification code">{otp.map((digit,index)=><input key={index} ref={input=>{otpInputs.current[index]=input;}} value={digit} onChange={event=>updateOtp(index,event.target.value)} onPaste={pasteOtp} onKeyDown={event=>{if(event.key==='Backspace'&&!otp[index]&&index>0){event.preventDefault();const next=[...otp];next[index-1]='';setOtp(next);otpInputs.current[index-1]?.focus();}}} inputMode="numeric" autoComplete={index===0?'one-time-code':'off'} pattern="[0-9]*" maxLength={1} aria-label={`Digit ${index+1} of 8`} disabled={busy}/>)}</div>
-    {error&&<div className="authError" role="alert"><XCircle size={17}/>{error}</div>}{message&&<div className="authSuccess" role="status"><CheckCircle2 size={17}/>{message}</div>}
-    <button className="primary wide" disabled={busy||otp.join('').length!==8}>{busy?<><span className="buttonSpinner" aria-hidden="true"/> Verifying...</>:<>Verify code<ChevronRight size={17}/></>}</button>
-    <div className="otpActions"><button type="button" className="linkBtn" onClick={changeEmail} disabled={busy}>Change email</button><button type="button" className="linkBtn" onClick={()=>void resendVerification()} disabled={busy||resendSeconds>0}>{resendSeconds>0?`Resend code in ${resendSeconds}s`:'Resend code'}</button></div>
-    <small className="securityNote"><ShieldCheck size={14}/> Your verification code is handled securely by Supabase.</small>
-  </>;
-  return <div className="loginPage campusLogin"><section className="loginVisual" aria-label="Campus Library"><div className="loginBrand"><KgrLogo light/><p>KG Reddy College of Engineering &amp; Technology</p></div><div className="visualOverlay"><span className="eyebrow">THE CAMPUS LIBRARY</span><h1>A world of knowledge.<br/><em>Closer than ever.</em></h1><p>Your digital gateway to knowledge, resources and campus learning.</p><div className="academicVisual" aria-hidden="true"><div className="shelfBooks"><i/><i/><i/><i/><i/><i/></div><div className="shelfLine"/><span><BookOpen size={22}/> Learn. Explore. Discover.</span></div><div className="loginFeatures"><span><BookOpen size={17}/> Explore the collection</span><span><Bookmark size={17}/> Manage your borrowing</span><span><Library size={17}/> Access learning resources</span></div></div><small className="loginVisualFooter">Campus Library | KG Reddy College</small></section><div className="loginPanel"><div className="loginFormWrap"><form className="loginCard" onSubmit={step==='otp'?verifyOtp:(mode==='login'?login:mode==='signup'?createAccount:sendPasswordRecovery)} aria-busy={busy}>{step==='email'?emailForm:otpForm}</form><p className="loginSupport">Need help accessing your account? Contact the college library.</p></div></div></div>
+  return <div className="loginPage campusLogin"><section className="loginVisual" aria-label="Campus Library"><div className="loginBrand"><KgrLogo light/><p>KG Reddy College of Engineering &amp; Technology</p></div><div className="visualOverlay"><span className="eyebrow">THE CAMPUS LIBRARY</span><h1>A world of knowledge.<br/><em>Closer than ever.</em></h1><p>Your digital gateway to knowledge, resources and campus learning.</p><div className="academicVisual" aria-hidden="true"><div className="shelfBooks"><i/><i/><i/><i/><i/><i/></div><div className="shelfLine"/><span><BookOpen size={22}/> Learn. Explore. Discover.</span></div><div className="loginFeatures"><span><BookOpen size={17}/> Explore the collection</span><span><Bookmark size={17}/> Manage your borrowing</span><span><Library size={17}/> Access learning resources</span></div></div><small className="loginVisualFooter">Campus Library | KG Reddy College</small></section><div className="loginPanel"><div className="loginFormWrap"><form className="loginCard" onSubmit={submit} aria-busy={busy}><span className="formEyebrow">YOUR CAMPUS. YOUR LIBRARY.</span><h2>{mode==='login'?'Welcome back':'Create your account'}</h2><p>{mode==='login'?'Sign in with your official college email.':'Create a library account using your official college email.'}</p>{mode==='signup'&&<><label>Full name<input value={name} onChange={e=>setName(e.target.value)} placeholder="Your full name" required/></label><label>College ID<input value={collegeId} onChange={e=>setCollegeId(e.target.value)} placeholder="24QM1A6763" required/></label><label>Department<select value={department} onChange={e=>setDepartment(e.target.value)} required><option value="">Select department</option>{departments.length ? departments.map((dept) => <option key={dept.id} value={dept.id || dept.name || dept.code || ''}>{dept.name || dept.code || dept.id}</option>) : DEPARTMENT_OPTIONS.map((dept) => <option key={dept} value={dept}>{dept}</option>)}</select></label><label>Year of study<select value={year} onChange={e=>setYear(e.target.value)} required><option value="">Select year</option>{YEAR_OPTIONS.map((item) => <option key={item.value} value={String(item.value)}>{item.label}</option>)}</select></label></> }<label>College email<div className="inputIcon"><Mail size={17}/><input value={email} onChange={e=>setEmail(e.target.value)} placeholder="you@kgr.ac.in" autoComplete="username" type="email" required/></div></label><label>Password<input value={password} onChange={e=>setPassword(e.target.value)} placeholder="Enter your password" autoComplete={mode==='login'?'current-password':'new-password'} type="password" required/></label>{error&&<div className="authError" role="alert"><XCircle size={17}/>{error}</div>}{message&&<div className="authSuccess" role="status"><CheckCircle2 size={17}/>{message}</div>}<button className="primary wide" disabled={busy}>{busy?<><span className="buttonSpinner" aria-hidden="true"/> Please wait...</>:<>{mode==='login'?'Sign in':'Create account'}<ChevronRight size={17}/></>}</button><button type="button" className="linkBtn" onClick={()=>{setMode(mode==='login'?'signup':'login');setError('');setMessage('');setName('');setCollegeId('');setDepartment('');setYear('')}}>{mode==='login'?"Don't have an account? Create one":"Already have an account? Sign in"}</button><small className="securityNote"><ShieldCheck size={14}/> Only official <b>@kgr.ac.in</b> accounts are allowed.</small></form><p className="loginSupport">Need help accessing your account? Contact the college library.</p></div></div></div>
 }
 
 function Page({page,profile,setPage,globalSearch}:{page:string;profile:Profile;setPage:(p:string)=>void;globalSearch:string}){
@@ -361,7 +356,7 @@ function Page({page,profile,setPage,globalSearch}:{page:string;profile:Profile;s
   if(page==='notifications')return <Notifications profile={profile} admin={admin}/>;
   if(page==='resources')return <Resources profile={profile} admin={admin}/>;
   if(page==='profile')return <ProfilePage profile={profile}/>;
-  if(page==='analytics'&&admin)return <Analytics/>;
+  if(page==='analytics'&&admin)return <React.Suspense fallback={<div className="analytics-kpi-grid" role="status" aria-label="Loading analytics">{Array.from({length:8},(_,index)=><div className="analytics-kpi-skeleton" key={index}><i/><b/><span/></div>)}</div>}><LibraryAnalytics supabaseClient={supabase!}/></React.Suspense>;
   if(page==='categories'&&admin)return <Categories/>;
   if(page==='settings'&&admin)return <SettingsPage/>;
   return admin?<AdminDashboard profile={profile}/>:<UserDashboard profile={profile} setPage={setPage}/>;
@@ -401,30 +396,94 @@ function Header({title,subtitle,action}:{title:string;subtitle:string;action?:Re
 function Stat({label,value,icon,kind}:{label:string;value:string|number;icon:React.ReactNode;kind?:string}){return <div className="statCard"><div className={'statIcon '+(kind||'')}>{icon}</div><div><small>{label}</small><b>{value}</b></div></div>}
 
 function UserDashboard({profile,setPage}:{profile:Profile;setPage:(p:string)=>void}){
- const [books,setBooks]=useState<Book[]>([]);const [availableCount,setAvailableCount]=useState(0);const [loans,setLoans]=useState<Loan[]>([]);const [fines,setFines]=useState<Fine[]>([]);const [reservations,setReservations]=useState<Reservation[]>([]);const [unread,setUnread]=useState(0);const [loading,setLoading]=useState(true);const [error,setError]=useState('');
+ const [books,setBooks]=useState<Book[]>([]);const [departments,setDepartments]=useState<Department[]>([]);const [availableCount,setAvailableCount]=useState(0);const [loans,setLoans]=useState<Loan[]>([]);const [fines,setFines]=useState<Fine[]>([]);const [reservations,setReservations]=useState<Reservation[]>([]);const [notifications,setNotifications]=useState<DashboardNotification[]>([]);const [unread,setUnread]=useState(0);const [loading,setLoading]=useState(true);const [error,setError]=useState('');
  const load=async()=>{
    setLoading(true);setError('');
    try{await accrueOverdueFines()}catch(accrualError:any){setError(accrualError?.message||'Overdue data could not be refreshed.');}
-   const [bookRes,availableRes,loanRes,fineRes,reservationRes,notificationRes]=await Promise.all([
+   const [bookRes,departmentRes,availableRes,loanRes,fineRes,reservationRes,notificationRes,notificationRecentRes]=await Promise.all([
      supabase!.from('books').select('*').eq('is_active',true).order('title').limit(6),
+     supabase!.from('departments').select('id,name,code').order('name'),
      supabase!.from('books').select('available_copies').eq('is_active',true),
      supabase!.from('loans').select('*').eq('user_id',profile.id).order('issue_date',{ascending:false}),
-     supabase!.from('fines').select('*').eq('user_id',profile.id).eq('status','pending'),
+     supabase!.from('fines').select('*').eq('user_id',profile.id).order('issued_at',{ascending:false}),
      supabase!.from('reservations').select('*').eq('user_id',profile.id).in('status',['pending','ready']),
      supabase!.from('notifications').select('id',{count:'exact',head:true}).eq('user_id',profile.id).eq('is_read',false),
+     supabase!.from('notifications').select('id,title,type,created_at').eq('user_id',profile.id).order('created_at',{ascending:false}).limit(4),
    ]);
-  const queryError=bookRes.error||availableRes.error||loanRes.error||fineRes.error||reservationRes.error||notificationRes.error;
+  const queryError=bookRes.error||departmentRes.error||availableRes.error||loanRes.error||fineRes.error||reservationRes.error||notificationRes.error||notificationRecentRes.error;
    if(queryError)setError(queryError.message);
-  setBooks((bookRes.data||[]) as Book[]);setAvailableCount((availableRes.data||[]).reduce((sum,book)=>sum+Number(book.available_copies||0),0));setLoans((loanRes.data||[]) as Loan[]);setFines((fineRes.data||[]) as Fine[]);setReservations((reservationRes.data||[]) as Reservation[]);setUnread(notificationRes.count||0);setLoading(false);
+  setBooks((bookRes.data||[]) as Book[]);setDepartments((departmentRes.data||[]) as Department[]);setAvailableCount((availableRes.data||[]).reduce((sum,book)=>sum+Number(book.available_copies||0),0));setLoans((loanRes.data||[]) as Loan[]);setFines((fineRes.data||[]) as Fine[]);setReservations((reservationRes.data||[]) as Reservation[]);setUnread(notificationRes.count||0);setNotifications((notificationRecentRes.data||[]) as DashboardNotification[]);setLoading(false);
  };
  useEffect(()=>{void load();},[profile.id]);
  const activeLoans=loans.filter(loan=>getDisplayLoanStatus(loan)!=='returned');
  const overdueLoans=activeLoans.filter(loan=>getDisplayLoanStatus(loan)==='overdue');
- const dueSoon=activeLoans.filter(loan=>getDisplayLoanStatus(loan)==='active'&&loan.due_date>=today()&&loan.due_date<=addDays(today(),3));
- return <><Header title={`Hello, ${profile.full_name?.split(' ')[0]||'there'} 👋`} subtitle="Your real-time library overview." action={<button className="ghost" onClick={()=>void load()}><RefreshCw size={16}/> Refresh</button>}/>{error&&<div className="authError" role="alert"><FriendlyError message={error}/></div>}<section className="studentWelcome"><div><span className="eyebrow">YOUR CAMPUS LIBRARY</span><h2>Make room for your next discovery.</h2><p>Explore the collection, keep track of your books and continue learning.</p><button className="primary" onClick={()=>setPage('search')}><Search size={16}/> Explore books</button></div><div className="borrowingPriority"><span className="priorityLabel">BORROWING CHECK-IN</span>{loading?<p>Checking your borrowing...</p>:activeLoans.length?<><strong>{overdueLoans.length?`${overdueLoans.length} ${overdueLoans.length===1?'book needs':'books need'} your attention`:'Your next due date'}</strong><p>{formatDate([...activeLoans].sort((a,b)=>a.due_date.localeCompare(b.due_date))[0].due_date)}</p><button className="outline" onClick={()=>setPage('mybooks')}>Review my books <ChevronRight size={15}/></button></>:<><strong>Your next chapter starts here.</strong><p>Browse books and discover something new.</p><button className="outline" onClick={()=>setPage('reservations')}>View reservations <ChevronRight size={15}/></button></>}</div></section><div className="statsGrid"><Stat label="Available books" value={availableCount} icon={<BookOpen/>} kind="green"/><Stat label="Currently borrowed" value={activeLoans.length} icon={<ArrowLeftRight/>} kind="blue"/><Stat label="Due soon" value={dueSoon.length} icon={<AlertCircle/>} kind="orange"/><Stat label="Overdue books" value={overdueLoans.length} icon={<AlertCircle/>} kind="red"/><Stat label="Pending fines" value={formatMoney(fines.reduce((a,f)=>a+Number(f.amount),0))} icon={<CreditCard/>} kind="red"/><Stat label="Active reservations" value={reservations.length} icon={<Bookmark/>} kind="blue"/><Stat label="Unread notifications" value={unread} icon={<Bell/>} kind="purple"/></div><div className="grid2"><div className="panel"><div className="panelHead"><h3>Quick actions</h3></div><div className="quickGrid"><button onClick={()=>setPage('search')}><Search/><b>Search Books</b><small>Find available books</small></button><button onClick={()=>setPage('mybooks')}><BookOpen/><b>My Books</b><small>View issued books</small></button><button onClick={()=>setPage('reservations')}><Bookmark/><b>Reservations</b><small>Track waiting list</small></button><button onClick={()=>setPage('fines')}><CreditCard/><b>Fines</b><small>Check pending fines</small></button></div></div><div className="panel"><div className="panelHead"><h3>Explore the collection</h3><button className="ghost" onClick={()=>setPage('search')}>View all <ChevronRight size={15}/></button></div>{loading?<LoadingSkeleton/>:books.slice(0,4).map(b=><div className="bookRow" key={b.id}><div className="bookCoverMini">{b.cover_url?<img src={b.cover_url} alt=""/>:b.title.slice(0,1)}</div><div><b>{b.title}</b><small>{b.publisher||'Publisher not set'}</small></div><span className={b.available_copies?'available':'unavailable'}>{b.available_copies} available</span></div>)}</div></div></>
+ const dueSoon=activeLoans.filter(loan=>loan.due_date>=today()&&loan.due_date<=addDays(today(),3));
+ const fineTotal=(status:Fine['status'])=>fines.filter(fine=>fine.status===status).reduce((sum,fine)=>sum+Number(fine.amount||0),0);
+ const recentActivity=[
+   ...loans.flatMap(loan=>[
+     {id:`${loan.id}-issue`,title:'Book borrowed',detail:formatDate(loan.issue_date),date:loan.issue_date,kind:'loan'},
+     ...(loan.returned_date?[{id:`${loan.id}-return`,title:'Book returned',detail:formatDate(loan.returned_date),date:loan.returned_date,kind:'return'}]:[]),
+   ]),
+   ...reservations.map(reservation=>({id:reservation.id,title:'Reservation updated',detail:`${reservation.status} · ${formatDate(reservation.reserved_at)}`,date:reservation.reserved_at,kind:'reservation'})),
+   ...fines.map(fine=>({id:fine.id,title:'Fine recorded',detail:`${formatMoney(Number(fine.amount))} · ${fine.status}`,date:fine.issued_at,kind:'fine'})),
+   ...notifications.map(notification=>({id:notification.id,title:notification.title,detail:notification.type||'Library update',date:notification.created_at,kind:'notification'})),
+ ].sort((a,b)=>new Date(b.date).getTime()-new Date(a.date).getTime()).slice(0,6);
+ return <div className="studentDashboard">
+   <Header title="Your library" subtitle={`A personal view of your reading and library activity, ${profile.full_name?.split(' ')[0]||'there'}.`} action={<button className="ghost" onClick={()=>void load()} disabled={loading}><RefreshCw size={16}/> {loading?'Refreshing...':'Refresh'}</button>}/>
+   {error&&<div className="authError" role="alert"><FriendlyError message={error}/></div>}
+   <section className="studentWelcome">
+     <div className="studentWelcomeCopy"><span className="eyebrow">KG REDDY CAMPUS LIBRARY</span><h2>Welcome back, {profile.full_name?.split(' ')[0]||'reader'}.</h2><p>Your next good read is waiting. Explore the collection and stay on top of your borrowing.</p><div className="studentWelcomeActions"><button className="primary" onClick={()=>setPage('search')}><Search size={16}/> Browse the catalogue</button><button className="studentWelcomeLink" onClick={()=>setPage('mybooks')}>My borrowed books <ChevronRight size={15}/></button></div></div>
+     <div className="studentProfileSummary"><div className="studentProfileAvatar">{initials(profile.full_name||profile.email)}</div><div><strong>{profile.full_name||'Library member'}</strong><span>{profile.college_id||profile.email}</span></div><div className="studentProfileMeta"><span>{getDepartmentName(profile.department_id,departments)}</span><i/>{getYearLabel(profile.year_of_study)}</div><button className="studentWelcomeLink" onClick={()=>setPage('profile')}>View profile <ChevronRight size={15}/></button></div>
+   </section>
+   <div className="studentStatsGrid">
+     <StudentMetric label="Currently borrowed" value={loading?'—':activeLoans.length} detail="Books on your account" icon={<BookOpen/>} tone="violet" onClick={()=>setPage('mybooks')}/>
+     <StudentMetric label="Due in 3 days" value={loading?'—':dueSoon.length} detail={dueSoon.length?'Plan a timely return':'No books due soon'} icon={<CalendarDays/>} tone="amber" onClick={()=>setPage('mybooks')}/>
+     <StudentMetric label="Overdue" value={loading?'—':overdueLoans.length} detail={overdueLoans.length?'Please return or contact the library':'You are all caught up'} icon={<AlertCircle/>} tone="rose" onClick={()=>setPage('mybooks')}/>
+     <StudentMetric label="Pending fines" value={loading?'—':formatMoney(fineTotal('pending'))} detail={`${fines.filter(fine=>fine.status==='paid').length} paid · ${fines.filter(fine=>fine.status==='waived').length} waived`} icon={<CreditCard/>} tone="teal" onClick={()=>setPage('fines')}/>
+     <StudentMetric label="Active reservations" value={loading?'—':reservations.length} detail="Pending or ready for pickup" icon={<Bookmark/>} tone="blue" onClick={()=>setPage('reservations')}/>
+     <StudentMetric label="Unread updates" value={loading?'—':unread} detail="Library notifications" icon={<Bell/>} tone="gold" onClick={()=>setPage('notifications')}/>
+   </div>
+   <div className="studentDashboardGrid">
+     <section className="studentPanel studentBorrowingPanel"><div className="studentPanelHeader"><div><span className="studentEyebrow">YOUR READING JOURNEY</span><h2>Borrowing activity</h2><p>Books issued to your account over the last six months.</p></div><span className="studentPanelIcon"><Activity size={18}/></span></div><StudentBorrowingChart loans={loans} loading={loading}/></section>
+     <section className="studentPanel studentStatusPanel"><div className="studentPanelHeader"><div><span className="studentEyebrow">AT A GLANCE</span><h2>Loan status</h2><p>Your full borrowing history.</p></div></div><StudentLoanStatus loans={loans} loading={loading}/><button className="studentTextAction" onClick={()=>setPage('mybooks')}>View borrowing history <ChevronRight size={15}/></button></section>
+     <section className="studentPanel studentActivityPanel"><div className="studentPanelHeader"><div><span className="studentEyebrow">RECENT UPDATES</span><h2>Your library activity</h2><p>Recent account-specific activity and updates.</p></div><button className="studentTextAction" onClick={()=>setPage('notifications')}>Notifications <ChevronRight size={15}/></button></div>{loading?<LoadingSkeleton/>:recentActivity.length?<div className="studentActivityList">{recentActivity.map(item=><article className="studentActivityItem" key={item.id}><span className={'studentActivityIcon '+item.kind}><Activity size={15}/></span><div><b>{item.title}</b><small>{item.detail}</small></div><time>{formatDate(item.date)}</time></article>)}</div>:<EmptyState title="Your reading journey starts here" description="Borrow books or reserve a title to see your library activity."/>}</section>
+     <section className="studentPanel studentDiscoverPanel"><div className="studentPanelHeader"><div><span className="studentEyebrow">CURATED FROM THE LIVE CATALOGUE</span><h2>Available to discover</h2><p>Titles currently listed by your campus library.</p></div><button className="studentTextAction" onClick={()=>setPage('search')}>Browse all <ChevronRight size={15}/></button></div>{loading?<LoadingSkeleton/>:books.filter(book=>book.available_copies>0).slice(0,4).length?<div className="studentDiscoverList">{books.filter(book=>book.available_copies>0).slice(0,4).map(book=><article className="studentDiscoverBook" key={book.id}><div className="studentBookCover">{book.cover_url?<img src={book.cover_url} alt={book.title}/>:<BookOpen size={22}/>}</div><div><b>{book.title}</b><small>{book.publisher||'Campus Library collection'}</small></div><span>{book.available_copies} available</span></article>)}</div>:<EmptyState title="No available titles in this view" description="Browse the catalogue to check other books and their availability."/>}</section>
+   </div>
+ </div>;
+}
+
+function StudentMetric({label,value,detail,icon,tone,onClick}:{label:string;value:string|number;detail:string;icon:React.ReactNode;tone:string;onClick:()=>void}){
+ return <button className="studentMetric" onClick={onClick}><span className={'studentMetricIcon '+tone}>{icon}</span><span className="studentMetricText"><small>{label}</small><strong>{value}</strong><em>{detail}</em></span><ChevronRight className="studentMetricArrow" size={16}/></button>;
+}
+
+function StudentBorrowingChart({loans,loading}:{loans:Loan[];loading:boolean}){
+ const current=new Date();
+ const months=Array.from({length:6},(_,index)=>new Date(Date.UTC(current.getUTCFullYear(),current.getUTCMonth()-5+index,1)));
+ const data=months.map(month=>{
+   const key=`${month.getUTCFullYear()}-${String(month.getUTCMonth()+1).padStart(2,'0')}`;
+   return {key,label:month.toLocaleDateString('en-IN',{month:'short',timeZone:'UTC'}),issued:loans.filter(loan=>loan.issue_date.slice(0,7)===key).length,returned:loans.filter(loan=>loan.returned_date?.slice(0,7)===key).length};
+ });
+ const maximum=Math.max(1,...data.flatMap(month=>[month.issued,month.returned]));
+ if(loading)return <div className="studentChartSkeleton" role="status" aria-label="Loading borrowing activity">{data.map(month=><i key={month.key}/>)}</div>;
+ if(!loans.length)return <div className="studentChartEmpty"><BookOpen size={22}/><span>Borrow a book to start your reading history.</span></div>;
+ return <div className="studentBorrowChart"><div className="studentChartLegend"><span className="issued">Issued</span><span className="returned">Returned</span></div><div className="studentChartBars">{data.map(month=><div className="studentChartMonth" key={month.key}><div className="studentChartBarGroup" aria-label={`${month.label}: ${month.issued} issued, ${month.returned} returned`}><span className="issued" title={`${month.issued} issued`} style={{height:`${Math.max(month.issued?5:1,month.issued/maximum*100)}%`}}/><span className="returned" title={`${month.returned} returned`} style={{height:`${Math.max(month.returned?5:1,month.returned/maximum*100)}%`}}/></div><small>{month.label}</small></div>)}</div></div>;
+}
+
+function StudentLoanStatus({loans,loading}:{loans:Loan[];loading:boolean}){
+ const returned=loans.filter(loan=>getDisplayLoanStatus(loan)==='returned').length;
+ const overdue=loans.filter(loan=>getDisplayLoanStatus(loan)==='overdue').length;
+ const active=loans.length-returned-overdue;
+ const total=loans.length;
+ const returnedPercent=total?returned/total*100:0;
+ const overduePercent=total?overdue/total*100:0;
+ const activePercent=total?active/total*100:0;
+ const background=total?`conic-gradient(#31a78b 0 ${returnedPercent}%,#e46f7d ${returnedPercent}% ${returnedPercent+overduePercent}%,#8060c8 ${returnedPercent+overduePercent}% 100%)`:'conic-gradient(#eeeaf3 0 100%)';
+ if(loading)return <div className="studentDonutSkeleton" role="status" aria-label="Loading loan status"><i/></div>;
+ return <div className="studentLoanStatus"><div className="studentDonut" style={{background}} role="img" aria-label={`${active} active, ${overdue} overdue, ${returned} returned`}><div><strong>{total}</strong><small>total loans</small></div></div><div className="studentLoanLegend"><span><i className="active"/><span>Active</span><b>{active}</b></span><span><i className="overdue"/><span>Overdue</span><b>{overdue}</b></span><span><i className="returned"/><span>Returned</span><b>{returned}</b></span></div></div>;
 }
 
 function SearchBooks({profile,initialQuery}:{profile:Profile;initialQuery:string}){
+ const student=profile.role==='student';
  const [books,setBooks]=useState<Book[]>([]);
  const [authors,setAuthors]=useState<Record<string,string[]>>({});
  const [copyCodes,setCopyCodes]=useState<Record<string,string[]>>({});
@@ -432,6 +491,7 @@ function SearchBooks({profile,initialQuery}:{profile:Profile;initialQuery:string
  const [query,setQuery]=useState(initialQuery);
  const [categoryFilter,setCategoryFilter]=useState('all');
  const [availabilityFilter,setAvailabilityFilter]=useState<'all'|'available'|'unavailable'>('all');
+ const [sortBy,setSortBy]=useState<'title'|'availability'|'year'>('title');
  const [page,setPage]=useState(0);
  const [loading,setLoading]=useState(true);
  const [error,setError]=useState('');
@@ -474,8 +534,9 @@ function SearchBooks({profile,initialQuery}:{profile:Profile;initialQuery:string
      &&(categoryFilter==='all'||book.category_id===categoryFilter)
      &&(availabilityFilter==='all'||(availabilityFilter==='available'?book.available_copies>0:book.available_copies===0));
  });
+ const sorted=[...filtered].sort((a,b)=>sortBy==='availability'?b.available_copies-a.available_copies:sortBy==='year'?(b.publication_year||0)-(a.publication_year||0):a.title.localeCompare(b.title));
  const pageCount=Math.max(1,Math.ceil(filtered.length/pageSize));
- const visible=filtered.slice(page*pageSize,(page+1)*pageSize);
+ const visible=sorted.slice(page*pageSize,(page+1)*pageSize);
 
  const openDetails=async(book:Book)=>{
    setSelected(book);setDetailsLoading(true);setCopies([]);
@@ -494,14 +555,15 @@ function SearchBooks({profile,initialQuery}:{profile:Profile;initialQuery:string
    setMessage('Reservation created successfully.');
  };
 
- return <><Header title="Search Books" subtitle="Search the live library catalogue." action={<button className="ghost" onClick={()=>void load()}><RefreshCw size={16}/> Refresh</button>}/>
-   <div className="searchPanel"><Search size={18}/><input value={query} onChange={event=>{setQuery(event.target.value);setPage(0)}} onKeyDown={event=>event.key==='Enter'&&setPage(0)} placeholder="Title, author, ISBN or accession code..."/><select value={categoryFilter} onChange={event=>{setCategoryFilter(event.target.value);setPage(0)}}><option value="all">All categories</option>{categories.map(category=><option key={category.id} value={category.id}>{category.name}</option>)}</select><select value={availabilityFilter} onChange={event=>{setAvailabilityFilter(event.target.value as typeof availabilityFilter);setPage(0)}}><option value="all">Any availability</option><option value="available">Available</option><option value="unavailable">Unavailable</option></select></div>
+ return <div className={student?'studentScreen':''}><Header title={student?'Browse the catalogue':'Search Books'} subtitle={student?'Find your next read across the live campus collection.':'Search the live library catalogue.'} action={<button className="ghost" onClick={()=>void load()}><RefreshCw size={16}/> Refresh</button>}/>
+   <div className={'searchPanel '+(student?'studentCatalogueFilters':'')}><Search size={18}/><input aria-label={student?'Search books':'Search catalogue'} value={query} onChange={event=>{setQuery(event.target.value);setPage(0)}} onKeyDown={event=>event.key==='Enter'&&setPage(0)} placeholder={student?'Search title, author, ISBN or accession code...':'Title, author, ISBN or accession code...'}/><select aria-label="Filter by category" value={categoryFilter} onChange={event=>{setCategoryFilter(event.target.value);setPage(0)}}><option value="all">All categories</option>{categories.map(category=><option key={category.id} value={category.id}>{category.name}</option>)}</select><select aria-label="Filter by availability" value={availabilityFilter} onChange={event=>{setAvailabilityFilter(event.target.value as typeof availabilityFilter);setPage(0)}}><option value="all">Any availability</option><option value="available">Available</option><option value="unavailable">Unavailable</option></select>{student&&<select aria-label="Sort catalogue" value={sortBy} onChange={event=>{setSortBy(event.target.value as typeof sortBy);setPage(0)}}><option value="title">Title A–Z</option><option value="availability">Most available</option><option value="year">Newest publication</option></select>}</div>
+   {student&&<div className="studentCatalogueMeta"><span>{loading?'Loading the collection…':`${filtered.length.toLocaleString('en-IN')} ${filtered.length===1?'title':'titles'} found`}</span><span>Availability shown from live copy records</span></div>}
    {error&&<div className="authError" role="alert"><FriendlyError message={error}/></div>}{message&&<div className="authSuccess">{message}</div>}
-   <div className="catalogGrid">{loading?<p>Loading catalogue...</p>:visible.map(book=><div className="catalogCard" key={book.id}><div className="catalogCover">{book.cover_url?<img src={book.cover_url} alt={book.title}/>:<BookOpen size={36}/>}</div><div className="catalogBody"><span className="tag">{categories.find(category=>category.id===book.category_id)?.name||'General'}</span><h3>{book.title}</h3><p>{(authors[book.id]||[]).join(', ')||'Author not listed'} · {book.publisher||'Publisher not set'}{book.publication_year?` · ${book.publication_year}`:''}</p><b className={book.available_copies?'available':'unavailable'}>{book.available_copies} available / {book.total_copies} copies</b><div className="cardActions"><button className="outline" onClick={()=>void openDetails(book)}>Details</button>{book.available_copies===0&&<button className="primary" onClick={()=>void reserve(book)}>Reserve</button>}</div></div></div>)}</div>
-   {!loading&&filtered.length===0&&<div className="panel">No books match your search.</div>}
+   <div className={'catalogGrid '+(student?'studentCatalogGrid':'')}>{loading?student?<LoadingSkeleton/>:<p>Loading catalogue...</p>:visible.map(book=>student?<article className="catalogCard studentCatalogCard" key={book.id}><button className="studentBookDetailsTrigger" aria-label={`View details for ${book.title}`} onClick={()=>void openDetails(book)}><div className="catalogCover">{book.cover_url?<img src={book.cover_url} alt={book.title}/>:<BookOpen size={36}/>}</div></button><div className="catalogBody"><div className="studentBookTags"><span className="tag">{categories.find(category=>category.id===book.category_id)?.name||'General'}</span><span className={'studentAvailability '+(book.available_copies?'available':'unavailable')}>{book.available_copies?'Available':'On loan'}</span></div><h3>{book.title}</h3><p className="studentBookAuthor">{(authors[book.id]||[]).join(', ')||'Author not listed'}</p><div className="studentBookFacts"><span>ISBN</span><b>{book.isbn||'Not listed'}</b></div><div className="studentBookFacts"><span>Copies</span><b>{book.available_copies} available of {book.total_copies}</b></div><div className="cardActions"><button className="outline" onClick={()=>void openDetails(book)}>View details</button>{book.available_copies===0&&<button className="primary" onClick={()=>void reserve(book)}>Reserve</button>}</div></div></article>:<div className="catalogCard" key={book.id}><div className="catalogCover">{book.cover_url?<img src={book.cover_url} alt={book.title}/>:<BookOpen size={36}/>}</div><div className="catalogBody"><span className="tag">{categories.find(category=>category.id===book.category_id)?.name||'General'}</span><h3>{book.title}</h3><p>{(authors[book.id]||[]).join(', ')||'Author not listed'} · {book.publisher||'Publisher not set'}{book.publication_year?` · ${book.publication_year}`:''}</p><b className={book.available_copies?'available':'unavailable'}>{book.available_copies} available / {book.total_copies} copies</b><div className="cardActions"><button className="outline" onClick={()=>void openDetails(book)}>Details</button>{book.available_copies===0&&<button className="primary" onClick={()=>void reserve(book)}>Reserve</button>}</div></div></div>)}</div>
+   {!loading&&filtered.length===0&&(student?<EmptyState title="No books match this search" description="Try another title, author, ISBN, category or availability filter."/>:<div className="panel">No books match your search.</div>)}
    {!loading&&filtered.length>pageSize&&<div className="inlineActions"><button className="outline" disabled={page===0} onClick={()=>setPage(value=>value-1)}>Previous</button><span>Page {page+1} of {pageCount}</span><button className="outline" disabled={page+1>=pageCount} onClick={()=>setPage(value=>value+1)}>Next</button></div>}
    {selected&&<DialogBackdrop onClose={()=>setSelected(null)}><div className="modal largeModal" onClick={event=>event.stopPropagation()}><button className="close" onClick={()=>setSelected(null)}>×</button><div className="bookDetailHeading">{selected.cover_url&&<img src={selected.cover_url} alt={selected.title}/>}<div><span className="formEyebrow">THE LIBRARY COLLECTION</span><h2>{selected.title}</h2></div></div>{selected.subtitle&&<p>{selected.subtitle}</p>}<p>{selected.description||'No description available.'}</p><div className="detailGrid"><Metric label="Author" value={(authors[selected.id]||[]).join(', ')||'—'}/><Metric label="ISBN" value={selected.isbn||'—'}/><Metric label="Publisher" value={selected.publisher||'—'}/><Metric label="Edition" value={selected.edition||'—'}/><Metric label="Publication year" value={selected.publication_year||'—'}/><Metric label="Language" value={selected.language||'—'}/><Metric label="Category" value={categories.find(category=>category.id===selected.category_id)?.name||'—'}/><Metric label="Total copies" value={selected.total_copies}/><Metric label="Available copies" value={selected.available_copies}/><Metric label="Availability" value={selected.available_copies>0?'Available':'Unavailable'}/></div>{selected.cover_url&&<p><a href={selected.cover_url} target="_blank" rel="noreferrer">Open cover</a></p>}{selected.ebook_url&&<p><a href={selected.ebook_url} target="_blank" rel="noreferrer">Open e-book / resource</a></p>}<h3>Physical copies</h3><div className="tablePanel"><table><thead><tr><th>Copy</th><th>Accession</th><th>Shelf</th><th>Rack</th><th>Status</th></tr></thead><tbody>{detailsLoading?<tr><td colSpan={5}>Loading copies...</td></tr>:copies.length?copies.map(copy=><tr key={copy.id}><td>{copy.copy_number}</td><td>{copy.accession_code||copy.copy_number}</td><td>{copy.shelf_number||'—'}</td><td>{copy.rack_number||'—'}</td><td>{copy.status}</td></tr>):<tr><td colSpan={5}>No physical-copy records found.</td></tr>}</tbody></table></div></div></DialogBackdrop>}
- </>;
+ </div>;
 }
 
 function BooksAdmin(){
@@ -817,41 +879,181 @@ function BookForm({book,categories,onClose,onSaved}:{book:Book|null;categories:C
 
 function AdminDashboard({profile}:{profile:Profile}){
   const [stats,setStats]=useState({books:0,totalCopies:0,availableCopies:0,members:0,loans:0,overdue:0,reservations:0,pendingFines:0,collectedFines:0,waivedFines:0,todayIssues:0,todayReturns:0,todayReservations:0});
-  const [activity,setActivity]=useState<any[]>([]);
+  const [activity,setActivity]=useState<Array<{id:string;action:string;description:string|null;created_at:string;entity_type:string|null}>>([]);
+  const [weekActivity,setWeekActivity]=useState<Array<{date:string;issued:number;returned:number}>>([]);
+  const [monthActivity,setMonthActivity]=useState<Array<{key:string;label:string;issued:number;returned:number}>>([]);
   const [loading,setLoading]=useState(true);
   const [error,setError]=useState('');
   const load=async()=>{
     setLoading(true);setError('');
-    try{await accrueOverdueFines();}catch(accrualError:any){setError(accrualError?.message||'Overdue fine data could not refresh.');}
-    const dayStart=`${today()}T00:00:00.000Z`;
-    const dayEnd=`${addDays(today(),1)}T00:00:00.000Z`;
-    const [booksRes,copiesRes,membersRes,loansRes,overdueRes,reservationsRes,pendingFinesRes,collectedFinesRes,waivedFinesRes,issuesTodayRes,returnsTodayRes,reservationsTodayRes,activityRes]=await Promise.all([
-      supabase!.from('books').select('id',{count:'exact',head:true}),
-      supabase!.from('book_copies').select('id',{count:'exact',head:true}),
-      supabase!.from('profiles').select('id',{count:'exact',head:true}),
-      supabase!.from('loans').select('id',{count:'exact',head:true}).in('status',['active','overdue']),
-      supabase!.from('loans').select('id',{count:'exact',head:true}).is('returned_date',null).lt('due_date',today()),
-      supabase!.from('reservations').select('id',{count:'exact',head:true}).eq('status','pending'),
-      supabase!.from('fines').select('amount').eq('status','pending'),
-      supabase!.from('fines').select('amount').eq('status','paid'),
-      supabase!.from('fines').select('amount').eq('status','waived'),
-      supabase!.from('loans').select('id',{count:'exact',head:true}).gte('issue_date',today()).lt('issue_date',addDays(today(),1)),
-      supabase!.from('loans').select('id',{count:'exact',head:true}).gte('returned_date',dayStart).lt('returned_date',dayEnd),
-      supabase!.from('reservations').select('id',{count:'exact',head:true}).gte('reserved_at',dayStart).lt('reserved_at',dayEnd),
-      supabase!.from('activity_logs').select('*').order('created_at',{ascending:false}).limit(8),
-    ]);
-    const allBooks=await supabase!.from('books').select('available_copies');
-    if(booksRes.error||copiesRes.error||membersRes.error||loansRes.error||overdueRes.error)setError(booksRes.error?.message||copiesRes.error?.message||membersRes.error?.message||loansRes.error?.message||overdueRes.error?.message||'Unable to load dashboard statistics.');
-    const availableCopies=((allBooks.data||[]) as Array<{available_copies:number}>).reduce((total,book)=>total+Number(book.available_copies||0),0);
-    const total=(rows:any[]|null)=> (rows||[]).reduce((sum,row)=>sum+Number(row.amount||0),0);
-    setStats({books:booksRes.count||0,totalCopies:copiesRes.count||0,availableCopies,members:membersRes.count||0,loans:loansRes.count||0,overdue:overdueRes.count||0,reservations:reservationsRes.count||0,pendingFines:total(pendingFinesRes.data),collectedFines:total(collectedFinesRes.data),waivedFines:total(waivedFinesRes.data),todayIssues:issuesTodayRes.count||0,todayReturns:returnsTodayRes.count||0,todayReservations:reservationsTodayRes.count||0});
-    setActivity((activityRes.data||[]) as any[]);setLoading(false);
+    try {
+      try{await accrueOverdueFines();}catch(accrualError){setError(accrualError instanceof Error?accrualError.message:'Overdue fine data could not refresh.');}
+      const currentDay=today();
+      const dayStart=`${currentDay}T00:00:00.000Z`;
+      const dayEnd=`${addDays(currentDay,1)}T00:00:00.000Z`;
+      const weekStart=addDays(currentDay,-6);
+      const currentDate=new Date();
+      const firstMonth=new Date(Date.UTC(currentDate.getUTCFullYear(),currentDate.getUTCMonth()-11,1));
+      const monthStart=`${firstMonth.getUTCFullYear()}-${String(firstMonth.getUTCMonth()+1).padStart(2,'0')}-01`;
+      const [booksRes,copiesRes,membersRes,loansRes,overdueRes,reservationsRes,pendingFinesRes,collectedFinesRes,waivedFinesRes,issuesTodayRes,returnsTodayRes,reservationsTodayRes,activityRes,issuedWeekRes,returnedWeekRes,issuedMonthsRes,returnedMonthsRes,allBooksRes]=await Promise.all([
+        supabase!.from('books').select('id',{count:'exact',head:true}),
+        supabase!.from('book_copies').select('id',{count:'exact',head:true}),
+        supabase!.from('profiles').select('id',{count:'exact',head:true}),
+        supabase!.from('loans').select('id',{count:'exact',head:true}).in('status',['active','overdue']),
+        supabase!.from('loans').select('id',{count:'exact',head:true}).is('returned_date',null).lt('due_date',currentDay),
+        supabase!.from('reservations').select('id',{count:'exact',head:true}).eq('status','pending'),
+        supabase!.from('fines').select('amount').eq('status','pending'),
+        supabase!.from('fines').select('amount').eq('status','paid'),
+        supabase!.from('fines').select('amount').eq('status','waived'),
+        supabase!.from('loans').select('id',{count:'exact',head:true}).gte('issue_date',currentDay).lt('issue_date',addDays(currentDay,1)),
+        supabase!.from('loans').select('id',{count:'exact',head:true}).gte('returned_date',dayStart).lt('returned_date',dayEnd),
+        supabase!.from('reservations').select('id',{count:'exact',head:true}).gte('reserved_at',dayStart).lt('reserved_at',dayEnd),
+        supabase!.from('activity_logs').select('id,action,description,created_at,entity_type').order('created_at',{ascending:false}).limit(8),
+        supabase!.from('loans').select('issue_date').gte('issue_date',weekStart).lt('issue_date',addDays(currentDay,1)),
+        supabase!.from('loans').select('returned_date').gte('returned_date',`${weekStart}T00:00:00.000Z`).lt('returned_date',dayEnd),
+        supabase!.from('loans').select('issue_date').gte('issue_date',monthStart).lt('issue_date',addDays(currentDay,1)),
+        supabase!.from('loans').select('returned_date').gte('returned_date',`${monthStart}T00:00:00.000Z`).lt('returned_date',dayEnd),
+        supabase!.from('books').select('available_copies'),
+      ]);
+      const queryError=[booksRes,copiesRes,membersRes,loansRes,overdueRes,reservationsRes,pendingFinesRes,collectedFinesRes,waivedFinesRes,issuesTodayRes,returnsTodayRes,reservationsTodayRes,activityRes,issuedWeekRes,returnedWeekRes,issuedMonthsRes,returnedMonthsRes,allBooksRes].find(result=>result.error)?.error;
+      if(queryError)setError(queryError.message||'Unable to load all dashboard information.');
+      const availableCopies=(allBooksRes.data||[]).reduce((total,book)=>total+Number(book.available_copies||0),0);
+      const total=(rows:Array<{amount:number|string|null}>|null)=> (rows||[]).reduce((sum,row)=>sum+Number(row.amount||0),0);
+      setStats({books:booksRes.count||0,totalCopies:copiesRes.count||0,availableCopies,members:membersRes.count||0,loans:loansRes.count||0,overdue:overdueRes.count||0,reservations:reservationsRes.count||0,pendingFines:total(pendingFinesRes.data),collectedFines:total(collectedFinesRes.data),waivedFines:total(waivedFinesRes.data),todayIssues:issuesTodayRes.count||0,todayReturns:returnsTodayRes.count||0,todayReservations:reservationsTodayRes.count||0});
+      const days=Array.from({length:7},(_,index)=>addDays(weekStart,index));
+      setWeekActivity(days.map(date=>({
+        date,
+        issued:(issuedWeekRes.data||[]).filter(loan=>loan.issue_date.slice(0,10)===date).length,
+        returned:(returnedWeekRes.data||[]).filter(loan=>loan.returned_date?.slice(0,10)===date).length,
+      })));
+      const months=Array.from({length:12},(_,index)=>{
+        const monthDate=new Date(Date.UTC(firstMonth.getUTCFullYear(),firstMonth.getUTCMonth()+index,1));
+        const key=`${monthDate.getUTCFullYear()}-${String(monthDate.getUTCMonth()+1).padStart(2,'0')}`;
+        return {
+          key,
+          label:monthDate.toLocaleDateString('en-IN',{month:'short',timeZone:'UTC'}),
+          issued:(issuedMonthsRes.data||[]).filter(loan=>loan.issue_date.slice(0,7)===key).length,
+          returned:(returnedMonthsRes.data||[]).filter(loan=>loan.returned_date?.slice(0,7)===key).length,
+        };
+      });
+      setMonthActivity(months);
+      setActivity((activityRes.data||[]) as Array<{id:string;action:string;description:string|null;created_at:string;entity_type:string|null}>);
+    } catch(loadError) {
+      setError(loadError instanceof Error?loadError.message:'Unable to load dashboard statistics.');
+    } finally {
+      setLoading(false);
+    }
   };
   useEffect(()=>{void load();},[]);
-  return <><Header title="Librarian Dashboard" subtitle={`Live library data · signed in as ${profile.full_name||profile.email}`} action={<button className="ghost" onClick={()=>void load()}><RefreshCw size={16}/> Refresh</button>}/>{error&&<div className="authError" role="alert"><FriendlyError message={error}/></div>}<div className="statsGrid"><Stat label="Total book titles" value={stats.books} icon={<BookOpen/>} kind="green"/><Stat label="Total physical copies" value={stats.totalCopies} icon={<BookOpen/>} kind="blue"/><Stat label="Available copies" value={stats.availableCopies} icon={<CheckCircle2/>} kind="green"/><Stat label="Total members" value={stats.members} icon={<Users/>} kind="purple"/><Stat label="Current loans" value={stats.loans} icon={<ArrowLeftRight/>} kind="orange"/><Stat label="Overdue loans" value={stats.overdue} icon={<AlertCircle/>} kind="red"/><Stat label="Pending reservations" value={stats.reservations} icon={<Bookmark/>} kind="blue"/><Stat label="Pending fines" value={formatMoney(stats.pendingFines)} icon={<CreditCard/>} kind="red"/><Stat label="Collected fines" value={formatMoney(stats.collectedFines)} icon={<CreditCard/>} kind="green"/><Stat label="Waived fines" value={formatMoney(stats.waivedFines)} icon={<CreditCard/>} kind="blue"/><Stat label="Today's issues" value={stats.todayIssues} icon={<ArrowLeftRight/>} kind="orange"/><Stat label="Today's returns" value={stats.todayReturns} icon={<CheckCircle2/>} kind="green"/><Stat label="Today's reservations" value={stats.todayReservations} icon={<Bookmark/>} kind="blue"/></div><div className="panel"><div className="panelHead"><h3>Recent library activity</h3>{loading&&<span>Loading...</span>}</div>{activity.length?activity.map(row=><div className="bookRow" key={row.id}><div className="bookCoverMini"><ActivityIcon action={row.action}/></div><div><b>{row.description||row.action}</b><small>{formatDate(row.created_at)}</small></div><span>{row.entity_type||'Activity'}</span></div>):<p>No recent activity recorded.</p>}</div><div className="panel"><div className="panelHead"><h3>Database status</h3></div><div className="metricGrid"><Metric label="Authentication" value="Supabase Auth"/><Metric label="Database" value="PostgreSQL"/><Metric label="Security" value="RLS enabled"/><Metric label="College domain" value="@kgr.ac.in"/></div></div></>;
+  return <>
+    <Header title="Librarian Dashboard" subtitle={`Live library operations · ${profile.full_name||profile.email}`} action={<button className="ghost" onClick={()=>void load()} disabled={loading}><RefreshCw size={16}/> {loading?'Refreshing...':'Refresh'}</button>}/>
+    {error&&<div className="authError" role="alert"><FriendlyError message={error}/></div>}
+    {loading?<div className="statsGrid" role="status" aria-label="Loading dashboard statistics">{Array.from({length:13},(_,index)=><div className="adminStatSkeleton" key={index}><i/><span/><b/></div>)}</div>:<div className="statsGrid">
+      <Stat label="Total book titles" value={stats.books} icon={<BookOpen/>} kind="green"/>
+      <Stat label="Total physical copies" value={stats.totalCopies} icon={<BookOpen/>} kind="blue"/>
+      <Stat label="Available copies" value={stats.availableCopies} icon={<CheckCircle2/>} kind="green"/>
+      <Stat label="Total members" value={stats.members} icon={<Users/>} kind="purple"/>
+      <Stat label="Current loans" value={stats.loans} icon={<ArrowLeftRight/>} kind="orange"/>
+      <Stat label="Overdue loans" value={stats.overdue} icon={<AlertCircle/>} kind="red"/>
+      <Stat label="Pending reservations" value={stats.reservations} icon={<Bookmark/>} kind="blue"/>
+      <Stat label="Pending fines" value={formatMoney(stats.pendingFines)} icon={<CreditCard/>} kind="red"/>
+      <Stat label="Collected fines" value={formatMoney(stats.collectedFines)} icon={<CreditCard/>} kind="green"/>
+      <Stat label="Waived fines" value={formatMoney(stats.waivedFines)} icon={<CreditCard/>} kind="blue"/>
+      <Stat label="Today's issues" value={stats.todayIssues} icon={<ArrowLeftRight/>} kind="orange"/>
+      <Stat label="Today's returns" value={stats.todayReturns} icon={<CheckCircle2/>} kind="green"/>
+      <Stat label="Today's reservations" value={stats.todayReservations} icon={<Bookmark/>} kind="blue"/>
+    </div>}
+    <DashboardWeekChart data={weekActivity} loading={loading}/>
+    <div className="adminDashboardCharts">
+      <DashboardMonthlyChart data={monthActivity} loading={loading}/>
+      <DashboardAvailability total={stats.totalCopies} available={stats.availableCopies} loading={loading}/>
+    </div>
+    <DashboardFineSummary pending={stats.pendingFines} collected={stats.collectedFines} waived={stats.waivedFines} loading={loading}/>
+    <div className="panel">
+      <div className="panelHead"><div><h3>Recent library activity</h3><span className="panelSubtext">Latest circulation and library updates</span></div>{loading&&<span role="status">Loading...</span>}</div>
+      {activity.length?<div className="adminActivityList">{activity.map(row=><article className="adminActivityItem" key={row.id}>
+        <span className="adminActivityMarker"><ActivityIcon action={row.action}/></span>
+        <div className="adminActivityCopy"><b>{row.description||row.action}</b><small>{formatDate(row.created_at)} · {new Date(row.created_at).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'})}</small></div>
+        <span className="adminActivityType">{row.entity_type||'Activity'}</span>
+      </article>)}</div>:<EmptyState title={loading?'Loading activity':'No recent activity'} description={loading?'Recent library updates are loading.':'New library activity will appear here.'}/>}
+    </div>
+    <div className="panel">
+      <div className="panelHead"><div><h3>System overview</h3><span className="panelSubtext">Core platform services and access protections</span></div></div>
+      <div className="metricGrid"><Metric label="Authentication" value="Supabase Auth"/><Metric label="Database" value="PostgreSQL"/><Metric label="Security" value="RLS enabled"/><Metric label="College domain" value="@kgr.ac.in"/></div>
+    </div>
+  </>;
 }
 
 function ActivityIcon({action}:{action:string}){return action?.includes('return')?<CheckCircle2 size={18}/>:action?.includes('reservation')?<Bookmark size={18}/>:action?.includes('issue')?<ArrowLeftRight size={18}/>:<Bell size={18}/>;}
+
+function DashboardWeekChart({data,loading}:{data:Array<{date:string;issued:number;returned:number}>;loading:boolean}){
+  const maximum=Math.max(1,...data.flatMap(day=>[day.issued,day.returned]));
+  return <section className="adminWeekPanel" aria-label="Weekly borrowing activity">
+    <div className="adminWeekHeader"><div><span className="adminEyebrow">COLLECTION ACTIVITY</span><h2>Weekly circulation</h2><p>Books issued and returned over the last seven days.</p></div><div className="adminWeekLegend"><span><i className="issuedDot"/>Issued</span><span><i className="returnedDot"/>Returned</span></div></div>
+    {loading?<div className="adminWeekSkeleton" role="status" aria-label="Loading weekly activity">{Array.from({length:7},(_,index)=><i key={index}/>)}</div>:<div className="adminWeekChart">{data.map(day=><div className="adminWeekDay" key={day.date}>
+      <div className="adminWeekBars" aria-label={`${day.issued} issued, ${day.returned} returned`}>
+        <span className="issuedBar" title={`${day.issued} issued`} style={{height:`${Math.max(day.issued?5:1,(day.issued/maximum)*100)}%`}}/>
+        <span className="returnedBar" title={`${day.returned} returned`} style={{height:`${Math.max(day.returned?5:1,(day.returned/maximum)*100)}%`}}/>
+      </div>
+      <strong>{(day.issued+day.returned).toLocaleString('en-IN')}</strong>
+      <small>{new Date(`${day.date}T00:00:00`).toLocaleDateString('en-IN',{weekday:'short'})}</small>
+    </div>)}</div>}
+  </section>;
+}
+
+function DashboardMonthlyChart({data,loading}:{data:Array<{key:string;label:string;issued:number;returned:number}>;loading:boolean}){
+  const maximum=Math.max(1,...data.flatMap(month=>[month.issued,month.returned]));
+  const hasActivity=data.some(month=>month.issued||month.returned);
+  return <section className="adminInsightPanel adminMonthlyPanel">
+    <div className="adminInsightHeader"><div><span className="adminEyebrow">BORROWING TRENDS</span><h2>Monthly circulation</h2><p>Issues and returns over the last 12 months.</p></div><div className="adminWeekLegend"><span><i className="issuedDot"/>Issued</span><span><i className="returnedDot"/>Returned</span></div></div>
+    {loading?<div className="adminMonthlySkeleton" role="status" aria-label="Loading monthly circulation">{Array.from({length:12},(_,index)=><i key={index}/>)}</div>:hasActivity?<div className="adminMonthlyChart">{data.map(month=><div className="adminMonthlyItem" key={month.key}>
+      <div className="adminMonthlyBars">
+        <span className="issuedBar" title={`${month.issued} issued`} style={{height:`${Math.max(month.issued?5:1,(month.issued/maximum)*100)}%`}}/>
+        <span className="returnedBar" title={`${month.returned} returned`} style={{height:`${Math.max(month.returned?5:1,(month.returned/maximum)*100)}%`}}/>
+      </div>
+      <small>{month.label}</small>
+    </div>)}</div>:<div className="adminChartEmpty"><ActivityIcon action="issue"/><span>No borrowing activity recorded in the last 12 months.</span></div>}
+  </section>;
+}
+
+function DashboardAvailability({total,available,loading}:{total:number;available:number;loading:boolean}){
+  const safeTotal=Math.max(0,total);
+  const safeAvailable=Math.min(safeTotal,Math.max(0,available));
+  const unavailable=Math.max(0,safeTotal-safeAvailable);
+  const availablePercent=safeTotal?Math.round((safeAvailable/safeTotal)*100):0;
+  return <section className="adminInsightPanel adminAvailabilityPanel">
+    <div className="adminInsightHeader"><div><span className="adminEyebrow">COLLECTION HEALTH</span><h2>Book availability</h2><p>Physical copies currently ready to borrow.</p></div></div>
+    {loading?<div className="adminAvailabilitySkeleton" role="status" aria-label="Loading copy availability"><i/><b/><span/></div>:safeTotal?<>
+      <div className="adminAvailabilitySummary"><strong>{safeAvailable.toLocaleString('en-IN')}</strong><span>of {safeTotal.toLocaleString('en-IN')} copies available</span></div>
+      <div className="adminAvailabilityTrack" role="img" aria-label={`${availablePercent}% of physical copies are available`}>
+        <span style={{width:`${availablePercent}%`}}/>
+      </div>
+      <div className="adminAvailabilityLegend">
+        <span><i className="issuedDot"/>Available<strong>{safeAvailable.toLocaleString('en-IN')}</strong></span>
+        <span><i className="unavailableDot"/>Not available<strong>{unavailable.toLocaleString('en-IN')}</strong></span>
+      </div>
+      <div className="adminAvailabilityRate">{availablePercent}<small>% available</small></div>
+    </>:<div className="adminChartEmpty"><BookOpen size={18}/><span>No physical copies are recorded yet.</span></div>}
+  </section>;
+}
+
+function DashboardFineSummary({pending,collected,waived,loading}:{pending:number;collected:number;waived:number;loading:boolean}){
+  const values=[
+    {label:'Pending',amount:Math.max(0,pending),tone:'pending'},
+    {label:'Collected',amount:Math.max(0,collected),tone:'collected'},
+    {label:'Waived',amount:Math.max(0,waived),tone:'waived'},
+  ];
+  const total=values.reduce((sum,item)=>sum+item.amount,0);
+  return <section className="adminInsightPanel adminFinePanel">
+    <div className="adminInsightHeader"><div><span className="adminEyebrow">FINE COLLECTION</span><h2>Financial summary</h2><p>Current fine balances by recorded status.</p></div><strong className="adminFineTotal">{formatMoney(total)}</strong></div>
+    {loading?<div className="adminFineSkeleton" role="status" aria-label="Loading fine totals"><i/><span/><span/><span/></div>:total>0?<>
+      <div className="adminFineTrack" role="img" aria-label={values.map(item=>`${item.label}: ${formatMoney(item.amount)}`).join(', ')}>
+        {values.filter(item=>item.amount>0).map(item=><span key={item.label} className={item.tone} title={`${item.label}: ${formatMoney(item.amount)}`} style={{width:`${(item.amount/total)*100}%`}}/>)}
+      </div>
+      <div className="adminFineLegend">{values.map(item=><div key={item.label}><span><i className={item.tone}/>{item.label}</span><strong>{formatMoney(item.amount)}</strong></div>)}</div>
+    </>:<div className="adminChartEmpty"><CreditCard size={18}/><span>No fine amounts have been recorded.</span></div>}
+  </section>;
+}
 
 function MembersAdmin(){
   const [members,setMembers]=useState<Profile[]>([]);
@@ -1229,9 +1431,11 @@ function Reservations({profile,admin}:{profile:Profile;admin:boolean}){
     setLoading(true);
     const reservationQuery=supabase!.from('reservations').select('*').order('reserved_at',{ascending:true});
     if(!admin) reservationQuery.eq('user_id',profile.id);
+    const memberQuery=supabase!.from('profiles').select('*');
+    if(!admin)memberQuery.eq('id',profile.id);
     const [booksRes,membersRes,departmentsRes,reservationsRes]=await Promise.all([
       supabase!.from('books').select('*'),
-      supabase!.from('profiles').select('*'),
+      memberQuery,
       supabase!.from('departments').select('*'),
       reservationQuery,
     ]);
@@ -1284,15 +1488,17 @@ function Reservations({profile,admin}:{profile:Profile;admin:boolean}){
     return !earlierPending&&book.available_copies>readyHolds;
   };
 
-  return <><Header title="Reservations" subtitle={admin?'Manage the live reservation queue.':'Track your live reservations.'} action={<button className="ghost" onClick={()=>void load()}><RefreshCw size={16}/> Refresh</button>}/>
+  return <div className={admin?'':'studentScreen'}><Header title="Reservations" subtitle={admin?'Manage the live reservation queue.':'Your reservation queue, pickup windows and history.'} action={<button className="ghost" onClick={()=>void load()} disabled={loading}><RefreshCw size={16}/> Refresh</button>}/>
     {admin&&<div className="searchPanel"><Search size={18}/><input value={query} onChange={event=>setQuery(event.target.value)} placeholder="Search student, College ID, email, book or ISBN..."/><select value={filter} onChange={event=>setFilter(event.target.value as typeof filter)}><option value="all">All statuses</option><option value="pending">Pending</option><option value="ready">Ready</option><option value="fulfilled">Fulfilled</option><option value="cancelled">Cancelled</option><option value="expired">Expired</option></select></div>}
     {error&&<div className="authError" role="alert"><FriendlyError message={error}/></div>}{message&&<div className="authSuccess">{message}</div>}
-    <div className="tablePanel"><table><thead><tr>{admin&&<><th>Student</th><th>College ID</th><th>Department</th><th>Year</th><th>Email</th></>}<th>Book</th>{admin&&<th>ISBN</th>}<th>Reserved</th><th>Queue</th><th>Status</th><th>Ready date</th><th>Expiry date</th><th>Actions</th></tr></thead><tbody>{loading?<tr><td colSpan={admin?13:7}>Loading reservations...</td></tr>:filteredRows.length?filteredRows.map(reservation=>{
+    {!admin&&<div className="studentReservationFilters" aria-label="Filter reservations">{(['all','pending','ready','fulfilled','cancelled','expired'] as const).map(status=><button key={status} className={filter===status?'selected':''} aria-pressed={filter===status} onClick={()=>setFilter(status)}>{status==='all'?'All':status}<span>{status==='all'?rows.length:rows.filter(row=>row.status===status).length}</span></button>)}</div>}
+    {admin?<div className="tablePanel"><table><thead><tr><th>Student</th><th>College ID</th><th>Department</th><th>Year</th><th>Email</th><th>Book</th><th>ISBN</th><th>Reserved</th><th>Queue</th><th>Status</th><th>Ready date</th><th>Expiry date</th><th>Actions</th></tr></thead><tbody>{loading?<tr><td colSpan={13}>Loading reservations...</td></tr>:filteredRows.length?filteredRows.map(reservation=>{
       const book=bookMap[reservation.book_id];
       const member=memberMap[reservation.user_id];
-      return <tr key={reservation.id}>{admin&&<><td>{member?.full_name||'—'}</td><td>{member?.college_id||'—'}</td><td>{getDepartmentName(member?.department_id,departments)}</td><td>{getYearLabel(member?.year_of_study)}</td><td>{member?.email||'—'}</td></>}<td>{book?.title||reservation.book_id}</td>{admin&&<td>{book?.isbn||'—'}</td>}<td>{formatDate(reservation.reserved_at)}</td><td>{reservation.queue_position??'—'}</td><td><span className={'status '+reservation.status}>{reservation.status}</span></td><td>{formatDate(reservation.ready_at)}</td><td>{formatDate(reservation.expires_at)}</td><td><div className="inlineActions">{admin&&reservation.status==='pending'&&<button className="smallBtn outline" disabled={!canMarkReady(reservation)||busyId===reservation.id} onClick={()=>void updateStatus(reservation,'ready')}>Mark Ready</button>}{admin&&reservation.status==='ready'&&<button className="smallBtn outline" disabled={busyId===reservation.id} onClick={()=>void updateStatus(reservation,'fulfilled')}>Fulfill</button>}{admin&&(reservation.status==='pending'||reservation.status==='ready')&&<button className="smallBtn outline" disabled={busyId===reservation.id} onClick={()=>void updateStatus(reservation,'cancelled')}>Cancel</button>}{admin&&reservation.status==='ready'&&reservation.expires_at&&new Date(reservation.expires_at).getTime()<=Date.now()&&<button className="smallBtn ghost" disabled={busyId===reservation.id} onClick={()=>void updateStatus(reservation,'expired')}>Expire</button>}{!admin&&reservation.status==='pending'&&<button className="smallBtn outline" disabled={busyId===reservation.id} onClick={()=>void cancelOwnReservation(reservation)}>Cancel</button>}</div></td></tr>;
+      return <tr key={reservation.id}><td>{member?.full_name||'—'}</td><td>{member?.college_id||'—'}</td><td>{getDepartmentName(member?.department_id,departments)}</td><td>{getYearLabel(member?.year_of_study)}</td><td>{member?.email||'—'}</td><td>{book?.title||reservation.book_id}</td><td>{book?.isbn||'—'}</td><td>{formatDate(reservation.reserved_at)}</td><td>{reservation.queue_position??'—'}</td><td><span className={'status '+reservation.status}>{reservation.status}</span></td><td>{formatDate(reservation.ready_at)}</td><td>{formatDate(reservation.expires_at)}</td><td><div className="inlineActions">{reservation.status==='pending'&&<button className="smallBtn outline" disabled={!canMarkReady(reservation)||busyId===reservation.id} onClick={()=>void updateStatus(reservation,'ready')}>Mark Ready</button>}{reservation.status==='ready'&&<button className="smallBtn outline" disabled={busyId===reservation.id} onClick={()=>void updateStatus(reservation,'fulfilled')}>Fulfill</button>}{(reservation.status==='pending'||reservation.status==='ready')&&<button className="smallBtn outline" disabled={busyId===reservation.id} onClick={()=>void updateStatus(reservation,'cancelled')}>Cancel</button>}{reservation.status==='ready'&&reservation.expires_at&&new Date(reservation.expires_at).getTime()<=Date.now()&&<button className="smallBtn ghost" disabled={busyId===reservation.id} onClick={()=>void updateStatus(reservation,'expired')}>Expire</button>}</div></td></tr>;
     }):<tr><td colSpan={admin?13:7}>No reservations match this view.</td></tr>}</tbody></table></div>
-  </>;
+    :loading?<LoadingSkeleton/>:filteredRows.length?<div className="studentReservationList">{filteredRows.map(reservation=>{const book=bookMap[reservation.book_id];return <article className="studentReservationCard" key={reservation.id}><div className="studentReservationIcon"><Bookmark size={20}/></div><div className="studentReservationMain"><div className="studentReservationHeading"><div><span className="studentEyebrow">RESERVED {formatDate(reservation.reserved_at)}</span><h2>{book?.title||'Book details unavailable'}</h2><p>{book?.publisher||'Campus Library collection'}{book?.isbn?` · ISBN ${book.isbn}`:''}</p></div><span className={'status '+reservation.status}>{reservation.status}</span></div><div className="studentReservationFacts"><span><small>Queue position</small><b>{reservation.queue_position??'—'}</b></span><span><small>Ready for pickup</small><b>{reservation.ready_at?formatDate(reservation.ready_at):reservation.status==='pending'?'Awaiting availability':'—'}</b></span><span><small>Pickup expiry</small><b>{formatDate(reservation.expires_at)}</b></span></div>{reservation.status==='ready'&&<div className="studentReservationReady"><CheckCircle2 size={16}/> This book is ready. Please collect it before the expiry date.</div>}</div>{reservation.status==='pending'&&<button className="outline" disabled={busyId===reservation.id} onClick={()=>void cancelOwnReservation(reservation)}>{busyId===reservation.id?'Cancelling...':'Cancel request'}</button>}</article>})}</div>:<EmptyState title={filter==='all'?'No reservations yet':`No ${filter} reservations`} description="Reserve a title from the catalogue when no copies are currently available. Your queue and pickup details will appear here."/ >}
+  </div>;
 }
 
 function MyBooks({profile}:{profile:Profile}){
@@ -1324,7 +1530,18 @@ function MyBooks({profile}:{profile:Profile}){
     else setMessage(`Loan renewed until ${formatDate(data)}.`);
     await load();setBusyId('');
   };
-  return <><Header title="My Books" subtitle="Your live borrowing history and due dates." action={<button className="ghost" onClick={()=>void load()}><RefreshCw size={16}/> Refresh</button>}/>{error&&<div className="authError" role="alert"><FriendlyError message={error}/></div>}{message&&<div className="authSuccess">{message}</div>}<div className="tablePanel"><table><thead><tr><th>Book</th><th>Copy</th><th>Issued</th><th>Due</th><th>Status</th><th>Days</th><th>Action</th></tr></thead><tbody>{loading?<tr><td colSpan={7}>Loading loans...</td></tr>:rows.length?rows.map((loan:any)=>{const status=getDisplayLoanStatus(loan);return <tr key={loan.id}><td>{loan.book?.title||'—'}</td><td>{loan.copy?.copy_number||'—'}</td><td>{formatDate(loan.issue_date)}</td><td>{formatDate(loan.due_date)}</td><td><span className={'status '+status}>{status==='due_today'?'Due today':status}</span></td><td>{getLoanDaysText(loan)}</td><td>{status==='active'&&<button className="outline smallBtn" disabled={busyId===loan.id} onClick={()=>void renew(loan.id)}>{busyId===loan.id?'Renewing...':'Renew'}</button>}</td></tr>}):<tr><td colSpan={7}>No loans recorded.</td></tr>}</tbody></table></div></>;
+  return <div className="studentScreen"><Header title="My borrowed books" subtitle="Keep track of your current reads, return dates and borrowing history." action={<button className="ghost" onClick={()=>void load()} disabled={loading}><RefreshCw size={16}/> Refresh</button>}/>{error&&<div className="authError" role="alert"><FriendlyError message={error}/></div>}{message&&<div className="authSuccess">{message}</div>}
+    {loading?<LoadingSkeleton/>:rows.length?<div className="studentBorrowedList">{rows.map((loan:any)=>{const status=getDisplayLoanStatus(loan);const active=status!=='returned';return <article className={'studentLoanCard '+(status==='overdue'?'isOverdue':status==='due_today'?'isDueToday':'')} key={loan.id}>
+      <div className="studentLoanCover">{loan.book?.cover_url?<img src={loan.book.cover_url} alt={loan.book.title}/>:<BookOpen size={24}/>}</div>
+      <div className="studentLoanMain"><div className="studentLoanHeading"><div><span className="studentEyebrow">{active?'CURRENT LOAN':'BORROWING HISTORY'}</span><h2>{loan.book?.title||'Book details unavailable'}</h2><p>{loan.book?.publisher||'Campus Library collection'}{loan.copy?.copy_number?` · Copy ${loan.copy.copy_number}`:''}{loan.copy?.accession_code?` · Accession ${loan.copy.accession_code}`:''}</p></div><span className={'status '+status}>{status==='due_today'?'Due today':status}</span></div>
+        <div className="studentLoanDates"><span><small>Issued</small><b>{formatDate(loan.issue_date)}</b></span><span><small>{active?'Due date':'Returned'}</small><b>{formatDate(active?loan.due_date:loan.returned_date)}</b></span><span><small>{active?'Time remaining':'Loan duration'}</small><b className={status==='overdue'?'studentOverdueText':''}>{active?getLoanDaysText(loan):getReturnedLoanDuration(loan)}</b></span></div>
+        {status==='overdue'&&<div className="studentDueNotice"><AlertCircle size={16}/> This book is overdue. Please return it to the library as soon as possible.</div>}
+        {status==='due_today'&&<div className="studentDueNotice soon"><CalendarDays size={16}/> This book is due today. Please plan your return.</div>}
+        {status==='active'&&loan.due_date>=today()&&loan.due_date<=addDays(today(),3)&&<div className="studentDueNotice soon"><CalendarDays size={16}/> This book is due soon. Return it by {formatDate(loan.due_date)}.</div>}
+      </div>
+      {status==='active'&&<button className="outline studentRenewButton" disabled={busyId===loan.id} onClick={()=>void renew(loan.id)}>{busyId===loan.id?'Renewing...':'Request renewal'}</button>}
+    </article>})}</div>:<EmptyState title="No borrowing history yet" description="When you borrow a book, its due date and return details will appear here."/>}
+  </div>;
 }
 function Fines({profile}:{profile:Profile}){
  const [rows,setRows]=useState<Fine[]>([]);
@@ -1354,14 +1571,18 @@ function Fines({profile}:{profile:Profile}){
  const copyMap=Object.fromEntries(copies.map(copy=>[copy.id,copy]));
  const bookMap=Object.fromEntries(books.map(book=>[book.id,book]));
  const loanMap=Object.fromEntries(loans.map(loan=>[loan.id,loan]));
- return <><Header title="Fines & Payments" subtitle="Your current fines and payment history."/>
-   <div className="fineTotal"><div><small>Total pending fine</small><h2>{formatMoney(rows.filter(fine=>fine.status==='pending').reduce((sum,fine)=>sum+Number(fine.amount),0))}</h2></div><CreditCard size={42}/></div>
+ const totalFor=(status:Fine['status'])=>rows.filter(fine=>fine.status===status).reduce((sum,fine)=>sum+Number(fine.amount||0),0);
+ return <div className="studentScreen"><Header title="Fines & payments" subtitle="A clear record of your library charges and their current status."/>
+   <div className="studentFineSummary">
+     {(['pending','paid','waived'] as const).map(status=><article className={'studentFineTotal '+status} key={status}><span className="studentFineTotalIcon">{status==='pending'?<Clock3 size={18}/>:status==='paid'?<CheckCircle2 size={18}/>:<ShieldCheck size={18}/>}</span><div><small>{status==='pending'?'Pending balance':status==='paid'?'Paid to date':'Waived total'}</small><strong>{loading?'—':formatMoney(totalFor(status))}</strong><span>{rows.filter(fine=>fine.status===status).length} {rows.filter(fine=>fine.status===status).length===1?'record':'records'}</span></div></article>)}
+   </div>
    {error&&<div className="authError" role="alert"><FriendlyError message={error}/></div>}
-  <div className="tablePanel"><table><thead><tr><th>Book</th><th>Amount</th><th>Reason</th><th>Status</th><th>Date</th><th>Notes</th></tr></thead><tbody>{loading?<tr><td colSpan={6}>Loading fines...</td></tr>:rows.length?rows.map(fine=>{const loan=fine.loan_id?loanMap[fine.loan_id]:null;const copy=loan?copyMap[loan.copy_id]:null;const book=copy?bookMap[copy.book_id]:null;return <tr key={fine.id}><td>{book?.title||'—'}</td><td>{formatMoney(Number(fine.amount))}</td><td>{fine.reason}</td><td><span className={'status '+(fine.status==='pending'?'waiting':fine.status==='paid'?'active':'cancelled')}>{fine.status}</span></td><td>{formatDate(fine.accrual_date||fine.issued_at)}</td><td>{fine.notes||'—'}</td></tr>}):<tr><td colSpan={6}>No fines recorded.</td></tr>}</tbody></table></div>
- </>;
+  {loading?<LoadingSkeleton/>:rows.length?<div className="studentFineList">{rows.map(fine=>{const loan=fine.loan_id?loanMap[fine.loan_id]:null;const copy=loan?copyMap[loan.copy_id]:null;const book=copy?bookMap[copy.book_id]:null;return <article className="studentFineCard" key={fine.id}><div className={'studentFineGlyph '+fine.status}><CreditCard size={18}/></div><div className="studentFineInfo"><div className="studentFineHeading"><div><span className="studentEyebrow">LIBRARY FINE · {formatDate(fine.accrual_date||fine.issued_at)}</span><h2>{book?.title||'Book record'}</h2></div><span className={'status '+fine.status}>{fine.status}</span></div><p>{fine.reason}</p>{fine.notes&&<small>{fine.notes}</small>}</div><strong className="studentFineAmount">{formatMoney(Number(fine.amount))}</strong></article>})}</div>:<EmptyState title="No fines recorded" description="Your fine and payment history will appear here if a charge is recorded."/ >}
+ </div>;
 }
 function Notifications({profile,admin}:{profile:Profile;admin:boolean}){
  const [rows,setRows]=useState<Notification[]>([]);
+ const [unreadCount,setUnreadCount]=useState(0);
  const [loading,setLoading]=useState(true);
  const [error,setError]=useState('');
  const [message,setMessage]=useState('');
@@ -1372,12 +1593,16 @@ function Notifications({profile,admin}:{profile:Profile;admin:boolean}){
  const [busy,setBusy]=useState(false);
  const load=async()=>{
    setLoading(true);setError('');
-   let request=supabase!.from('notifications').select('*').order('created_at',{ascending:false}).limit(500);
+   let request=supabase!.from('notifications').select('*',{count:'exact'}).order('created_at',{ascending:false}).limit(500);
    if(!admin)request=request.eq('user_id',profile.id);
    if(unreadOnly)request=request.eq('is_read',false);
-   const {data,error:loadError}=await request;
+   let unreadRequest=supabase!.from('notifications').select('id',{count:'exact',head:true}).eq('is_read',false);
+   if(!admin)unreadRequest=unreadRequest.eq('user_id',profile.id);
+   const [{data,error:loadError},unreadResult]=await Promise.all([request,unreadRequest]);
    if(loadError)setError(loadError.message);
+   if(unreadResult.error)setError(unreadResult.error.message);
    setRows((data||[]) as Notification[]);setLoading(false);
+   setUnreadCount(unreadResult.count||0);
  };
  useEffect(()=>{void load();},[profile.id,admin,unreadOnly]);
  const markRead=async(id:string)=>{
@@ -1396,16 +1621,26 @@ function Notifications({profile,admin}:{profile:Profile;admin:boolean}){
    if(sendError)setError(sendError.message);else{setMessage(`Announcement sent to ${Number(data||0)} users.`);setTitle('');setBody('');}
    setBusy(false);
  };
- return <><Header title="Notifications" subtitle={admin?'Library notifications and announcements.':'Your library updates.'} action={<div className="inlineControls"><label><input type="checkbox" checked={unreadOnly} onChange={event=>setUnreadOnly(event.target.checked)}/> Unread only</label><button className="ghost" onClick={()=>void load()}><RefreshCw size={16}/> Refresh</button><button className="outline" onClick={()=>void markAllRead()}>Mark all read</button></div>}/>
+ return <div className={admin?'':'studentScreen'}><Header title={admin?'Notifications':'Your notifications'} subtitle={admin?'Library notifications and announcements.':'Due-date reminders, reservation updates and library announcements.'} action={<div className="inlineControls">{!admin&&<span className="studentUnreadCount">{unreadCount} unread</span>}<label><input type="checkbox" checked={unreadOnly} onChange={event=>setUnreadOnly(event.target.checked)}/> Unread only</label><button className="ghost" onClick={()=>void load()} disabled={loading}><RefreshCw size={16}/> Refresh</button>{(admin||unreadCount>0)&&<button className="outline" onClick={()=>void markAllRead()}>Mark all read</button>}</div>}/>
    {admin&&<div className="panel"><div className="panelHead"><h3>Send announcement</h3></div><div className="formGrid"><label>Audience<select value={target} onChange={event=>setTarget(event.target.value)}><option value="all">Students and faculty</option><option value="student">Students</option><option value="faculty">Faculty</option></select></label><label>Title<input value={title} onChange={event=>setTitle(event.target.value)} placeholder="Announcement title"/></label><label className="full">Message<textarea value={body} onChange={event=>setBody(event.target.value)} placeholder="Write the library announcement..."/></label></div><button className="primary" disabled={busy||!title.trim()||!body.trim()} onClick={()=>void sendAnnouncement()}>{busy?'Sending...':'Send announcement'}</button></div>}
    {error&&<div className="authError" role="alert"><FriendlyError message={error}/></div>}{message&&<div className="authSuccess">{message}</div>}
-   <div className="noticeList">{loading?<p>Loading notifications...</p>:rows.length?rows.map(notification=><div className={'noticeRow '+(!notification.is_read?'unread':'')} key={notification.id}><div className="noticeIcon info"><Bell/></div><div><b>{notification.title}</b><p>{notification.message}</p><small>{new Date(notification.created_at).toLocaleString()}</small></div>{!notification.is_read&&<button className="outline smallBtn" onClick={()=>void markRead(notification.id)}>Mark read</button>}</div>):<div className="panel">No notifications to show.</div>}</div>
- </>;
+   <div className={admin?'noticeList':'studentNoticeList'}>{loading?<LoadingSkeleton/>:rows.length?rows.map(notification=>admin?<div className={'noticeRow '+(!notification.is_read?'unread':'')} key={notification.id}><div className="noticeIcon info"><Bell/></div><div><b>{notification.title}</b><p>{notification.message}</p><small>{new Date(notification.created_at).toLocaleString()}</small></div>{!notification.is_read&&<button className="outline smallBtn" onClick={()=>void markRead(notification.id)}>Mark read</button>}</div>:<article className={'noticeRow '+(!notification.is_read?'unread':'')} key={notification.id}><div className={'noticeIcon '+(notification.is_read?'info':'warning')}><StudentNotificationIcon type={notification.type}/></div><div className="studentNoticeContent"><div className="studentNoticeHeading"><b>{notification.title}</b><span>{notification.type?.replace(/[_-]+/g,' ')||'Library update'}</span></div><p>{notification.message}</p><small>{new Date(notification.created_at).toLocaleString('en-IN')}</small></div>{!notification.is_read&&<button className="outline smallBtn" onClick={()=>void markRead(notification.id)}>Mark read</button>}</article>):admin?<div className="panel">No notifications to show.</div>:<EmptyState title={unreadOnly?'All caught up':'No notifications yet'} description={unreadOnly?'You have no unread library updates.':'Library announcements and account updates will appear here.'}/>}</div>
+ </div>;
+}
+
+function StudentNotificationIcon({type}:{type:string|null}){
+ const normalized=(type||'').toLowerCase();
+ if(normalized.includes('reservation'))return <Bookmark/>;
+ if(normalized.includes('fine')||normalized.includes('payment'))return <CreditCard/>;
+ if(normalized.includes('overdue')||normalized.includes('due'))return <AlertCircle/>;
+ if(normalized.includes('book'))return <BookOpen/>;
+ return <Bell/>;
 }
 function Resources({profile,admin}:{profile:Profile;admin:boolean}){
  const [rows,setRows]=useState<LibraryResource[]>([]);
  const [query,setQuery]=useState('');
  const [typeFilter,setTypeFilter]=useState('all');
+ const [statusFilter,setStatusFilter]=useState<'all'|'active'|'archived'>('all');
  const [loading,setLoading]=useState(true);
  const [error,setError]=useState('');
  const [message,setMessage]=useState('');
@@ -1418,41 +1653,91 @@ function Resources({profile,admin}:{profile:Profile;admin:boolean}){
  const [busy,setBusy]=useState(false);
  const load=async()=>{
    setLoading(true);setError('');
-   let request=supabase!.from('library_resources').select('*').order('created_at',{ascending:false});
-   if(!admin)request=request.eq('is_active',true);
-   const {data,error:loadError}=await request;
-   if(loadError)setError(loadError.message);
-   setRows((data||[]) as LibraryResource[]);setLoading(false);
+   try {
+     let request=supabase!.from('library_resources').select('*').order('uploaded_at',{ascending:false});
+     if(!admin)request=request.eq('is_active',true);
+     const {data,error:loadError}=await request;
+     if(loadError)throw loadError;
+     const resources=(data||[]) as LibraryResource[];
+     setRows(resources);
+     return resources;
+   } catch(loadError) {
+     setRows([]);
+     setError(loadError instanceof Error?loadError.message:'Unable to load library resources.');
+     return null;
+   } finally {
+     setLoading(false);
+   }
  };
  useEffect(()=>{void load();},[admin]);
  const beginAdd=()=>{setEditing(null);setTitle('');setDescription('');setResourceType('link');setUrl('');setError('');setShowForm(true);};
  const beginEdit=(resource:LibraryResource)=>{setEditing(resource);setTitle(resource.title);setDescription(resource.description||'');setResourceType(resource.resource_type);setUrl(resource.url);setError('');setShowForm(true);};
  const save=async()=>{
    if(!title.trim()||!url.trim()){setError('Title and URL are required.');return;}
+   const resourceUrl=getSafeResourceUrl(url.trim());
+   if(!resourceUrl){
+     setError('Enter a valid resource URL beginning with https:// or http://.');
+     return;
+   }
    setBusy(true);setError('');setMessage('');
-   const payload={title:title.trim(),description:description.trim()||null,resource_type:resourceType,url:url.trim()};
-   const result=editing
-     ?await supabase!.from('library_resources').update(payload).eq('id',editing.id)
-     :await supabase!.from('library_resources').insert({...payload,created_by:profile.id,is_active:true});
-   if(result.error)setError(result.error.message);
-   else{setShowForm(false);setMessage(editing?'Resource updated.':'Resource added.');await load();}
-   setBusy(false);
+   try {
+     const payload={title:title.trim(),description:description.trim()||null,resource_type:resourceType,url:resourceUrl};
+     const result=editing
+       ?await supabase!.from('library_resources').update(payload).eq('id',editing.id).select('id').single()
+       :await supabase!.from('library_resources').insert({...payload,created_by:profile.id,is_active:true}).select('id').single();
+     if(result.error)throw result.error;
+     const refreshed=await load();
+     if(!refreshed) {
+       setError('The resource was saved, but the list could not be refreshed. Refresh the page to verify it.');
+       return;
+     }
+     if(!refreshed.some(resource=>resource.id===result.data.id)){
+       setError('The resource was saved, but could not be read back. Check its access permissions before trying again.');
+       return;
+     }
+     setShowForm(false);
+     setMessage(editing?'Resource updated.':'Resource added.');
+   } catch(saveError) {
+     setError(saveError instanceof Error?saveError.message:'Unable to save the library resource.');
+   } finally {
+     setBusy(false);
+   }
  };
  const toggleArchive=async(resource:LibraryResource)=>{
-   const {error:saveError}=await supabase!.from('library_resources').update({is_active:!resource.is_active}).eq('id',resource.id);
-   if(saveError)setError(saveError.message);else await load();
+   setError('');setMessage('');setBusy(true);
+   try {
+     const {data,error:saveError}=await supabase!.from('library_resources').update({is_active:!resource.is_active}).eq('id',resource.id).select('id').single();
+     if(saveError)throw saveError;
+     const refreshed=await load();
+     if(refreshed?.some(row=>row.id===data.id))setMessage(resource.is_active?'Resource archived.':'Resource restored.');
+     else setError('The resource status was updated, but it could not be read back. Refresh the page to verify it.');
+   } catch(saveError) {
+     setError(saveError instanceof Error?saveError.message:'Unable to update this resource.');
+   } finally {
+     setBusy(false);
+   }
  };
  const filtered=rows.filter(resource=>{
-   const matches=`${resource.title} ${resource.description||''} ${resource.resource_type}`.toLowerCase().includes(query.trim().toLowerCase());
-   return matches&&(typeFilter==='all'||resource.resource_type===typeFilter);
+   const matches=`${resource.title} ${resource.description||''} ${resource.resource_type} ${resource.url}`.toLowerCase().includes(query.trim().toLowerCase());
+   const statusMatches=statusFilter==='all'||(statusFilter==='active'?resource.is_active:!resource.is_active);
+   return matches&&statusMatches&&(typeFilter==='all'||resource.resource_type===typeFilter);
  });
  const types=Array.from(new Set(rows.map(resource=>resource.resource_type))).sort();
- return <><Header title="Library Resources" subtitle={admin?'Manage live library links and digital resources.':'Browse library links and digital resources.'} action={<div className="inlineActions"><button className="ghost" onClick={()=>void load()}><RefreshCw size={16}/> Refresh</button>{admin&&<button className="primary" onClick={beginAdd}><Plus size={16}/> Add resource</button>}</div>}/>
-   <div className="searchPanel"><Search size={18}/><input value={query} onChange={event=>setQuery(event.target.value)} placeholder="Search resources..."/><select value={typeFilter} onChange={event=>setTypeFilter(event.target.value)}><option value="all">All types</option>{types.map(type=><option value={type} key={type}>{type}</option>)}</select></div>
+ return <div className={profile.role==='student'?'studentScreen':''}><Header title="Library Resources" subtitle={admin?'Manage live library links and digital resources.':'Explore active digital books, study materials and library links.'} action={<div className="inlineActions"><button className="ghost" onClick={()=>void load()} disabled={loading}><RefreshCw size={16}/> Refresh</button>{admin&&<button className="primary" onClick={beginAdd}><Plus size={16}/> Add resource</button>}</div>}/>
+   <div className="searchPanel"><Search size={18}/><input value={query} onChange={event=>setQuery(event.target.value)} placeholder={admin?'Search title, description or link...':'Search resources...'}/><select value={typeFilter} onChange={event=>setTypeFilter(event.target.value)}><option value="all">All types</option>{types.map(type=><option value={type} key={type}>{type}</option>)}</select>{admin&&<select value={statusFilter} onChange={event=>setStatusFilter(event.target.value as typeof statusFilter)} aria-label="Filter by resource status"><option value="all">All statuses</option><option value="active">Active</option><option value="archived">Archived</option></select>}</div>
    {error&&<div className="authError" role="alert"><FriendlyError message={error}/></div>}{message&&<div className="authSuccess">{message}</div>}
-   {loading?<LoadingSkeleton/>:filtered.length?<div className="academicResourceGrid">{filtered.map(resource=><article className="academicResource" key={resource.id}><div className="resourceHeading"><span className="resourceGlyph"><Library size={22}/></span><span className="tag">{resource.resource_type}</span><span className={'status '+(resource.is_active?'active':'cancelled')}>{resource.is_active?'Active':'Archived'}</span></div><h3>{resource.title}</h3><p>{resource.description||'Open this resource to explore the material.'}</p><small>Added {formatDate(resource.created_at)}</small><div className="resourceActions"><a className="outline" href={resource.url} target="_blank" rel="noreferrer"><Download size={15}/> Open / Download</a>{admin&&<div className="inlineActions"><button className="ghost smallBtn" onClick={()=>beginEdit(resource)}>Edit</button><button className="ghost smallBtn" onClick={()=>void toggleArchive(resource)}>{resource.is_active?'Archive':'Reactivate'}</button></div>}</div></article>)}</div>:<EmptyState title="No resources found" description="Try another search or resource type."/>}
+   {loading?<LoadingSkeleton/>:filtered.length?<div className="academicResourceGrid">{filtered.map(resource=>{
+     const ResourceIcon=resource.resource_type==='ebook'?BookMarked:resource.resource_type==='document'||resource.resource_type==='exam'?FileText:resource.resource_type==='database'?Globe2:Library;
+     const resourceUrl=getSafeResourceUrl(resource.url);
+     return <article className="academicResource" key={resource.id}>
+       <div className="resourceHeading"><span className="resourceGlyph">{admin?<ResourceIcon size={22}/>:<Library size={22}/>}</span><span className="tag">{resource.resource_type}</span><span className={'status '+(resource.is_active?'active':'cancelled')}>{resource.is_active?'Active':'Archived'}</span></div>
+       <h3>{resource.title}</h3><p>{resource.description||'Open this resource to explore the material.'}</p>
+       <small>Added {formatDate(resource.uploaded_at)}</small>
+       <div className="resourceActions">{resourceUrl?<a className="outline" href={resourceUrl} target="_blank" rel="noopener noreferrer">{admin?<><ExternalLink size={15}/> Open resource</>:<><Download size={15}/> Open / Download</>}</a>:<span className="resourceInvalidLink" role="status">Resource link unavailable</span>}{admin&&<div className="inlineActions"><button className="ghost smallBtn" onClick={()=>beginEdit(resource)}>Edit</button><button className="ghost smallBtn" disabled={busy} onClick={()=>void toggleArchive(resource)}>{resource.is_active?<><Archive size={14}/> Archive</>:'Reactivate'}</button></div>}</div>
+     </article>;
+   })}</div>:<EmptyState title="No resources found" description={query||typeFilter!=='all'||statusFilter!=='all'?'Try another search or resource type.':admin?'There are no active library resources yet.':'Try another search or resource type.'}/>}
    {showForm&&<DialogBackdrop onClose={()=>setShowForm(false)}><div className="modal formModal" onClick={event=>event.stopPropagation()}><button className="close" onClick={()=>setShowForm(false)}>×</button><h2>{editing?'Edit resource':'Add resource'}</h2><div className="formGrid"><label>Title<input value={title} onChange={event=>setTitle(event.target.value)} required/></label><label>Type<select value={resourceType} onChange={event=>setResourceType(event.target.value)}><option value="link">Link</option><option value="ebook">E-book</option><option value="journal">Journal</option><option value="exam">Exam resource</option><option value="database">Database</option><option value="document">Document</option></select></label><label className="full">URL<input type="url" value={url} onChange={event=>setUrl(event.target.value)} placeholder="https://..." required/></label><label className="full">Description<textarea value={description} onChange={event=>setDescription(event.target.value)}/></label></div>{error&&<div className="authError" role="alert"><FriendlyError message={error}/></div>}<button className="primary wide" disabled={busy||!title.trim()||!url.trim()} onClick={()=>void save()}>{busy?'Saving...':'Save resource'}</button></div></DialogBackdrop>}
- </>;
+ </div>;
 }
 function ProfilePage({profile}:{profile:Profile}){
   const [departments,setDepartments]=useState<Department[]>([]);
@@ -1478,7 +1763,8 @@ function ProfilePage({profile}:{profile:Profile}){
     if(saveError)setError(saveError.message);else setMessage('Contact information saved.');
     setBusy(false);
   };
-  return <><Header title="Profile" subtitle="Your official college library account."/><div className="profileCard"><div className="profileAvatar">{initials(profile.full_name||profile.email)}</div><h2>{profile.full_name||'—'}</h2><p>{profile.email}</p><div className="profileDetails"><Metric label="Role" value={profile.role}/><Metric label="College ID" value={profile.college_id||'—'}/><Metric label="Department" value={getDepartmentName(profile.department_id, departments)}/><Metric label="Year of Study" value={getYearLabel(profile.year_of_study)}/><Metric label="Account" value={profile.is_active?'Active':'Inactive'}/></div><div className="inlineForm"><label>Phone<input value={phone} onChange={event=>setPhone(event.target.value)} placeholder="Optional contact number"/></label><button className="primary" disabled={busy} onClick={()=>void savePhone()}>{busy?'Saving...':'Save contact'}</button></div>{error&&<div className="authError" role="alert"><FriendlyError message={error}/></div>}{message&&<div className="authSuccess">{message}</div>}</div></>;
+  const student=profile.role==='student';
+  return <div className={student?'studentScreen':''}><Header title={student?'Your profile':'Profile'} subtitle={student?'Your official college details and library account information.':'Your official college library account.'}/><div className={student?'profileCard studentProfileCard':'profileCard'}>{student&&<div className="profileAvatar">{initials(profile.full_name||profile.email)}</div>}{student&&<span className="studentEyebrow">KG REDDY CAMPUS LIBRARY</span>}<h2>{profile.full_name||'—'}</h2><p>{profile.email}</p><div className="profileDetails"><Metric label="Role" value={profile.role}/><Metric label="College ID" value={profile.college_id||'—'}/><Metric label="Department" value={getDepartmentName(profile.department_id, departments)}/><Metric label="Year of Study" value={getYearLabel(profile.year_of_study)}/><Metric label="Account" value={profile.is_active?'Active':'Inactive'}/></div><div className="inlineForm"><label>Phone<input value={phone} onChange={event=>setPhone(event.target.value)} placeholder="Optional contact number"/></label><button className="primary" disabled={busy} onClick={()=>void savePhone()}>{busy?'Saving...':'Save contact'}</button></div>{error&&<div className="authError" role="alert"><FriendlyError message={error}/></div>}{message&&<div className="authSuccess">{message}</div>}</div></div>;
 }
 function AnalyticsSummary(){const [stats,setStats]=useState({books:0,copies:0,members:0,loans:0,active:0,returned:0,overdue:0,fines:0});useEffect(()=>{(async()=>{
   const [booksRes,copiesRes,membersRes,loansRes,overdueRes,finesRes]=await Promise.all([
@@ -1631,6 +1917,14 @@ function isValidDateInput(value:string){
 function calculateOverdueDays(dueDate:string, asOf:string){ const due = new Date(dueDate); const todayDate = new Date(asOf); const diff = Math.ceil((todayDate.getTime() - due.getTime()) / (1000 * 60 * 60 * 24)); return diff > 0 ? diff : 0; }
 function getDisplayLoanStatus(loan:any){ const todayStr = today(); if (loan.status === 'returned' || loan.returned_date) return 'returned'; const due = new Date(loan.due_date); const todayDate = new Date(todayStr); const diff = Math.ceil((due.getTime() - todayDate.getTime()) / (1000*60*60*24)); if (diff < 0) return 'overdue'; if (diff === 0) return 'due_today'; return 'active'; }
 function getLoanDaysText(loan:any){ const due = new Date(loan.due_date); const todayDate = new Date(today()); const diff = Math.ceil((due.getTime() - todayDate.getTime()) / (1000*60*60*24)); if (diff < 0) return `${Math.abs(diff)} days overdue`; if (diff === 0) return 'Due today'; return `${diff} days left`; }
+function getReturnedLoanDuration(loan:Pick<Loan,'issue_date'|'returned_date'>){
+ if(!loan.returned_date)return '—';
+ const issuedAt=Date.parse(`${loan.issue_date.slice(0,10)}T00:00:00Z`);
+ const returnedAt=Date.parse(`${loan.returned_date.slice(0,10)}T00:00:00Z`);
+ if(!Number.isFinite(issuedAt)||!Number.isFinite(returnedAt)||returnedAt<issuedAt)return '—';
+ const days=Math.floor((returnedAt-issuedAt)/86400000)+1;
+ return `${days} ${days===1?'day':'days'}`;
+}
 
 async function getDailyFineRate(){
   try {
