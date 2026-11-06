@@ -184,6 +184,7 @@ function Login(){
   const [step,setStep]=useState<'email'|'otp'>('email');
   const [email,setEmail]=useState('');
   const [password,setPassword]=useState('');
+  const [confirmPassword,setConfirmPassword]=useState('');
   const [name,setName]=useState('');
   const [collegeId,setCollegeId]=useState('');
   const [department,setDepartment]=useState('');
@@ -339,7 +340,65 @@ function Login(){
     }
     setBusy(false);
   };
-  return <div className="loginPage campusLogin"><section className="loginVisual" aria-label="Campus Library"><div className="loginBrand"><KgrLogo light/><p>KG Reddy College of Engineering &amp; Technology</p></div><div className="visualOverlay"><span className="eyebrow">THE CAMPUS LIBRARY</span><h1>A world of knowledge.<br/><em>Closer than ever.</em></h1><p>Your digital gateway to knowledge, resources and campus learning.</p><div className="academicVisual" aria-hidden="true"><div className="shelfBooks"><i/><i/><i/><i/><i/><i/></div><div className="shelfLine"/><span><BookOpen size={22}/> Learn. Explore. Discover.</span></div><div className="loginFeatures"><span><BookOpen size={17}/> Explore the collection</span><span><Bookmark size={17}/> Manage your borrowing</span><span><Library size={17}/> Access learning resources</span></div></div><small className="loginVisualFooter">Campus Library | KG Reddy College</small></section><div className="loginPanel"><div className="loginFormWrap"><form className="loginCard" onSubmit={submit} aria-busy={busy}><span className="formEyebrow">YOUR CAMPUS. YOUR LIBRARY.</span><h2>{mode==='login'?'Welcome back':'Create your account'}</h2><p>{mode==='login'?'Sign in with your official college email.':'Create a library account using your official college email.'}</p>{mode==='signup'&&<><label>Full name<input value={name} onChange={e=>setName(e.target.value)} placeholder="Your full name" required/></label><label>College ID<input value={collegeId} onChange={e=>setCollegeId(e.target.value)} placeholder="24QM1A6763" required/></label><label>Department<select value={department} onChange={e=>setDepartment(e.target.value)} required><option value="">Select department</option>{departments.length ? departments.map((dept) => <option key={dept.id} value={dept.id || dept.name || dept.code || ''}>{dept.name || dept.code || dept.id}</option>) : DEPARTMENT_OPTIONS.map((dept) => <option key={dept} value={dept}>{dept}</option>)}</select></label><label>Year of study<select value={year} onChange={e=>setYear(e.target.value)} required><option value="">Select year</option>{YEAR_OPTIONS.map((item) => <option key={item.value} value={String(item.value)}>{item.label}</option>)}</select></label></> }<label>College email<div className="inputIcon"><Mail size={17}/><input value={email} onChange={e=>setEmail(e.target.value)} placeholder="you@kgr.ac.in" autoComplete="username" type="email" required/></div></label><label>Password<input value={password} onChange={e=>setPassword(e.target.value)} placeholder="Enter your password" autoComplete={mode==='login'?'current-password':'new-password'} type="password" required/></label>{error&&<div className="authError" role="alert"><XCircle size={17}/>{error}</div>}{message&&<div className="authSuccess" role="status"><CheckCircle2 size={17}/>{message}</div>}<button className="primary wide" disabled={busy}>{busy?<><span className="buttonSpinner" aria-hidden="true"/> Please wait...</>:<>{mode==='login'?'Sign in':'Create account'}<ChevronRight size={17}/></>}</button><button type="button" className="linkBtn" onClick={()=>{setMode(mode==='login'?'signup':'login');setError('');setMessage('');setName('');setCollegeId('');setDepartment('');setYear('')}}>{mode==='login'?"Don't have an account? Create one":"Already have an account? Sign in"}</button><small className="securityNote"><ShieldCheck size={14}/> Only official <b>@kgr.ac.in</b> accounts are allowed.</small></form><p className="loginSupport">Need help accessing your account? Contact the college library.</p></div></div></div>
+  const submit=(event:React.FormEvent)=>{
+    if(step==='otp')return verifyOtp(event);
+    if(mode==='login')return login(event);
+    if(mode==='signup')return createAccount(event);
+    return sendPasswordRecovery(event);
+  };
+  const changeEmail=()=>{setStep('email');setOtp(Array(8).fill(''));setResendSeconds(0);setError('');setMessage('');};
+  const resetMode=()=>{setMode(mode==='login'?'signup':'login');setStep('email');setError('');setMessage('');setUnverifiedEmail(false);setPassword('');setConfirmPassword('');setName('');setCollegeId('');setDepartment('');setYear('');};
+  const showRecovery=()=>{setMode('recovery');setStep('email');setError('');setMessage('');setUnverifiedEmail(false);setPassword('');setConfirmPassword('');};
+  const returnToLogin=()=>{setMode('login');setStep('email');setError('');setMessage('');setPassword('');setConfirmPassword('');};
+  const emailForm=<>
+    <span className="formEyebrow">YOUR CAMPUS. YOUR LIBRARY.</span>
+    <h2>{mode==='login'?'Welcome back':mode==='signup'?'Create your account':'Forgot Password?'}</h2>
+    <p>{mode==='login'?'Sign in with your official college email.':mode==='signup'?'Create a library account using your official college email.':'Enter your college email and we will send you a password recovery link.'}</p>
+    {mode==='signup'&&<>
+      <label>Full name<input value={name} onChange={event=>setName(event.target.value)} placeholder="Your full name" required/></label>
+      <label>College ID<input value={collegeId} onChange={event=>setCollegeId(event.target.value)} placeholder="24QM1A6763" required/></label>
+      <label>Department<select value={department} onChange={event=>setDepartment(event.target.value)} required><option value="">Select department</option>{departments.length?departments.map(dept=><option key={dept.id} value={dept.id||dept.name||dept.code||''}>{dept.name||dept.code||dept.id}</option>):DEPARTMENT_OPTIONS.map(dept=><option key={dept} value={dept}>{dept}</option>)}</select></label>
+      <label>Year of study<select value={year} onChange={event=>setYear(event.target.value)} required><option value="">Select year</option>{YEAR_OPTIONS.map(item=><option key={item.value} value={String(item.value)}>{item.label}</option>)}</select></label>
+    </>}
+    <label>College email<div className="inputIcon"><Mail size={17}/><input value={email} onChange={event=>setEmail(event.target.value)} placeholder="you@kgr.ac.in" autoComplete="email" type="email" required/></div></label>
+    {mode!=='recovery'&&<label>Password<input value={password} onChange={event=>setPassword(event.target.value)} placeholder="Enter your password" autoComplete={mode==='login'?'current-password':'new-password'} type="password" required/></label>}
+    {mode==='signup'&&<label>Confirm Password<input value={confirmPassword} onChange={event=>setConfirmPassword(event.target.value)} placeholder="Confirm your password" autoComplete="new-password" type="password" required/></label>}
+    {error&&<div className="authError" role="alert"><XCircle size={17}/>{error}</div>}
+    {message&&<div className="authSuccess" role="status"><CheckCircle2 size={17}/>{message}</div>}
+    {unverifiedEmail&&<button type="button" className="linkBtn resendVerification" disabled={busy||resendSeconds>0} onClick={()=>void resendVerification()}>{resendSeconds>0?`Resend verification code in ${resendSeconds}s`:'Resend verification code'}</button>}
+    {mode==='login'&&<button type="button" className="linkBtn forgotPassword" onClick={showRecovery}>Forgot Password?</button>}
+    <button className="primary wide" disabled={busy}>{busy?<><span className="buttonSpinner" aria-hidden="true"/> Please wait...</>:<>{mode==='login'?'Sign in':mode==='signup'?'Create account & send code':'Send verification code'}<ChevronRight size={17}/></>}</button>
+    {mode==='recovery'?<button type="button" className="linkBtn" onClick={returnToLogin}>Back to Sign in</button>:<button type="button" className="linkBtn" onClick={resetMode}>{mode==='login'?"Don't have an account? Create one":"Already have an account? Sign in"}</button>}
+    <small className="securityNote"><ShieldCheck size={14}/> Only official <b>@kgr.ac.in</b> accounts are allowed.</small>
+  </>;
+  const otpForm=<>
+    <span className="formEyebrow">YOUR CAMPUS. YOUR LIBRARY.</span>
+    <h2>Check your email</h2>
+    <p>Enter the eight-digit verification code sent to <b>{email.trim().toLowerCase()}</b>.</p>
+    <div className="otpInputs" role="group" aria-label="Eight-digit verification code">{otp.map((digit,index)=><input key={index} ref={input=>{otpInputs.current[index]=input;}} value={digit} onChange={event=>updateOtp(index,event.target.value)} onPaste={pasteOtp} onKeyDown={event=>{if(event.key==='Backspace'&&!otp[index]&&index>0){event.preventDefault();const next=[...otp];next[index-1]='';setOtp(next);otpInputs.current[index-1]?.focus();}}} inputMode="numeric" autoComplete={index===0?'one-time-code':'off'} pattern="[0-9]*" maxLength={1} aria-label={`Digit ${index+1} of 8`} disabled={busy}/>)}</div>
+    {error&&<div className="authError" role="alert"><XCircle size={17}/>{error}</div>}
+    {message&&<div className="authSuccess" role="status"><CheckCircle2 size={17}/>{message}</div>}
+    <button className="primary wide" disabled={busy||otp.join('').length!==8}>{busy?<><span className="buttonSpinner" aria-hidden="true"/> Verifying...</>:<>Verify code<ChevronRight size={17}/></>}</button>
+    <div className="otpActions"><button type="button" className="linkBtn" onClick={changeEmail} disabled={busy}>Change email</button><button type="button" className="linkBtn" onClick={()=>void resendVerification()} disabled={busy||resendSeconds>0}>{resendSeconds>0?`Resend code in ${resendSeconds}s`:'Resend code'}</button></div>
+    <small className="securityNote"><ShieldCheck size={14}/> Your verification code is handled securely by Supabase.</small>
+  </>;
+  return <div className="loginPage campusLogin">
+    <section className="loginVisual" aria-label="Campus Library">
+      <div className="loginBrand"><KgrLogo light/><p>KG Reddy College of Engineering &amp; Technology</p></div>
+      <div className="visualOverlay">
+        <span className="eyebrow">THE CAMPUS LIBRARY</span>
+        <h1>A world of knowledge.<br/><em>Closer than ever.</em></h1>
+        <p>Your digital gateway to knowledge, resources and campus learning.</p>
+        <div className="academicVisual" aria-hidden="true"><div className="shelfBooks"><i/><i/><i/><i/><i/><i/></div><div className="shelfLine"/><span><BookOpen size={22}/> Learn. Explore. Discover.</span></div>
+        <div className="loginFeatures"><span><BookOpen size={17}/> Explore the collection</span><span><Bookmark size={17}/> Manage your borrowing</span><span><Library size={17}/> Access learning resources</span></div>
+      </div>
+      <small className="loginVisualFooter">Campus Library | KG Reddy College</small>
+    </section>
+    <div className="loginPanel"><div className="loginFormWrap">
+      <form className="loginCard" onSubmit={submit} aria-busy={busy}>{step==='email'?emailForm:otpForm}</form>
+      <p className="loginSupport">Need help accessing your account? Contact the college library.</p>
+    </div></div>
+  </div>;
 }
 
 function Page({page,profile,setPage,globalSearch}:{page:string;profile:Profile;setPage:(p:string)=>void;globalSearch:string}){
