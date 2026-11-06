@@ -184,6 +184,7 @@ function Login(){
   const [step,setStep]=useState<'email'|'otp'>('email');
   const [email,setEmail]=useState('');
   const [password,setPassword]=useState('');
+  const [passwordVisible,setPasswordVisible]=useState(false);
   const [confirmPassword,setConfirmPassword]=useState('');
   const [name,setName]=useState('');
   const [collegeId,setCollegeId]=useState('');
@@ -347,8 +348,8 @@ function Login(){
     return sendPasswordRecovery(event);
   };
   const changeEmail=()=>{setStep('email');setOtp(Array(8).fill(''));setResendSeconds(0);setError('');setMessage('');};
-  const resetMode=()=>{setMode(mode==='login'?'signup':'login');setStep('email');setError('');setMessage('');setUnverifiedEmail(false);setPassword('');setConfirmPassword('');setName('');setCollegeId('');setDepartment('');setYear('');};
-  const showRecovery=()=>{setMode('recovery');setStep('email');setError('');setMessage('');setUnverifiedEmail(false);setPassword('');setConfirmPassword('');};
+  const resetMode=()=>{setMode(mode==='login'?'signup':'login');setStep('email');setError('');setMessage('');setUnverifiedEmail(false);setPassword('');setPasswordVisible(false);setConfirmPassword('');setName('');setCollegeId('');setDepartment('');setYear('');};
+  const showRecovery=()=>{setMode('recovery');setStep('email');setError('');setMessage('');setUnverifiedEmail(false);setPassword('');setPasswordVisible(false);setConfirmPassword('');};
   const returnToLogin=()=>{setMode('login');setStep('email');setError('');setMessage('');setPassword('');setConfirmPassword('');};
   const emailForm=<>
     <span className="formEyebrow">YOUR CAMPUS. YOUR LIBRARY.</span>
@@ -361,7 +362,7 @@ function Login(){
       <label>Year of study<select value={year} onChange={event=>setYear(event.target.value)} required><option value="">Select year</option>{YEAR_OPTIONS.map(item=><option key={item.value} value={String(item.value)}>{item.label}</option>)}</select></label>
     </>}
     <label>College email<div className="inputIcon"><Mail size={17}/><input value={email} onChange={event=>setEmail(event.target.value)} placeholder="you@kgr.ac.in" autoComplete="email" type="email" required/></div></label>
-    {mode!=='recovery'&&<label>Password<input value={password} onChange={event=>setPassword(event.target.value)} placeholder="Enter your password" autoComplete={mode==='login'?'current-password':'new-password'} type="password" required/></label>}
+    {mode!=='recovery'&&<label>Password<div className="passwordField"><input value={password} onChange={event=>setPassword(event.target.value)} placeholder="Enter your password" autoComplete={mode==='login'?'current-password':'new-password'} type={passwordVisible?'text':'password'} required/><button type="button" className="passwordVisibility" aria-label={passwordVisible?'Hide password':'Show password'} aria-pressed={passwordVisible} onClick={()=>setPasswordVisible(visible=>!visible)}>{passwordVisible?<EyeOff size={18}/>:<Eye size={18}/>}</button></div></label>}
     {mode==='signup'&&<label>Confirm Password<input value={confirmPassword} onChange={event=>setConfirmPassword(event.target.value)} placeholder="Confirm your password" autoComplete="new-password" type="password" required/></label>}
     {error&&<div className="authError" role="alert"><XCircle size={17}/>{error}</div>}
     {message&&<div className="authSuccess" role="status"><CheckCircle2 size={17}/>{message}</div>}
@@ -384,7 +385,7 @@ function Login(){
   </>;
   return <div className="loginPage campusLogin">
     <section className="loginVisual" aria-label="Campus Library">
-      <div className="loginBrand"><KgrLogo light/><p>KG Reddy College of Engineering &amp; Technology</p></div>
+      <div className="loginBrand"><KgrLogo light/></div>
       <div className="visualOverlay">
         <span className="eyebrow">THE CAMPUS LIBRARY</span>
         <h1>A world of knowledge.<br/><em>Closer than ever.</em></h1>
